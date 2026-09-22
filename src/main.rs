@@ -1,4 +1,5 @@
 mod lint;
+mod package;
 mod ui;
 mod backend;
 mod dtype;
@@ -1427,6 +1428,9 @@ enum CliCommand {
     Check,
     Lint,
     Test,
+    PackageInit,
+    PackageLock,
+    PackageVerify,
     BuildNative,
 }
 
@@ -1439,7 +1443,13 @@ fn parse_cli(
         Some("lint") => CliCommand::Lint,
         Some("test") => CliCommand::Test,
         Some("build") => CliCommand::BuildNative,
-        _ => return Err("uso: nano run|check|lint|test|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo]".into()),
+        Some("package") => match args.get(2).map(String::as_str) {
+            Some("init") => CliCommand::PackageInit,
+            Some("lock") => CliCommand::PackageLock,
+            Some("verify") => CliCommand::PackageVerify,
+            _ => return Err("uso: nano package init|lock|verify [diretório]".into()),
+        },
+        _ => return Err("uso: nano run|check|lint|test|package init|lock|verify|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo]".into()),
     };
 
     let mut path = None;
@@ -1447,7 +1457,10 @@ fn parse_cli(
     let mut selected_dtype = None;
     let mut output = None;
     let mut native_requested = false;
-    let mut index = 2;
+    let mut index = if matches!(
+        command,
+        CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify
+    ) { 3 } else { 2 };
 
     while index < args.len() {
         match args[index].as_str() {
@@ -1508,6 +1521,10 @@ fn parse_cli(
     if matches!(command, CliCommand::Test) && native_requested {
         return Err("Nano: --native não é válido com 'test'".into());
     }
+    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify)
+        && (native_requested || selected_backend.is_some() || selected_dtype.is_some() || output.is_some()) {
+        return Err("Nano: opções de execução/build não são válidas com 'package'".into());
+    }
 
     if matches!(command, CliCommand::BuildNative) && output.is_none() {
         let source_path = path.as_deref().unwrap_or("main.nano");
@@ -1520,7 +1537,16 @@ fn parse_cli(
 
     Ok((
         command,
-        path.unwrap_or_else(|| "main.nano".into()),
+        path.unwrap_or_else(|| {
+            if matches!(
+                command,
+                CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify
+            ) {
+                ".".into()
+            } else {
+                "main.nano".into()
+            }
+        }),
         selected_backend,
         selected_dtype,
         output,
@@ -1599,6 +1625,27 @@ fn main() {
             process::exit(2);
         }
     };
+    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify) {
+        let root = Path::new(&path);
+        let result = match command {
+            CliCommand::PackageInit => {
+                let name = root.file_name()
+                    .and_then(|v| v.to_str())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or("nano-project");
+                package::init(root, name)
+            }
+            CliCommand::PackageLock => package::lock(root),
+            CliCommand::PackageVerify => package::verify(root),
+            _ => unreachable!(),
+        };
+        if let Err(e) = result {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     if command == CliCommand::Lint {
         let source = match fs::read_to_string(&path) {
             Ok(s) => s,
