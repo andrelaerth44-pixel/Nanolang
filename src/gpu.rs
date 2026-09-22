@@ -92,7 +92,7 @@ pub(crate) struct GpuBackend {
 
 impl GpuBackend {
     pub(crate) fn new() -> Result<Self, BackendError> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
@@ -154,7 +154,9 @@ impl GpuBackend {
         if !rx.recv().map_err(|_| BackendError("callback da GPU não respondeu".into()))? {
             return Err(BackendError("não foi possível mapear o buffer GPU".into()));
         }
-        let mapped = slice.get_mapped_range();
+        let mapped = slice
+            .get_mapped_range()
+            .map_err(|e| BackendError(format!("não foi possível acessar o readback da GPU: {e:?}")))?;
         let mut out = Vec::with_capacity(count);
         for chunk in mapped.chunks_exact(4).take(count) {
             out.push(f32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
