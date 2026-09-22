@@ -172,7 +172,7 @@ impl NativeModule {
     ) -> Result<(), String> {
         let symbol = format!("nano_fn_{}", sanitize(name));
         let locals = initial_locals(params, code)?;
-        let (entry_states, max_stack, _local_kinds, _return_kind, _calls) =
+        let (entry_states, max_stack, local_kinds, _return_kind, _calls) =
             analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
 
         let temp_slots = 8usize;
@@ -287,20 +287,29 @@ impl NativeModule {
                     let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
                     let index = *locals.get(var).unwrap();
-                    let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
-                    match kind {
-                        Kind::Text | Kind::Function | Kind::Null | Kind::Any => self.text.push_str(&format!(
-                            "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
-                            stack_offset(slot),
+                    let value_kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
+                    let kind = local_kinds.get(var).copied().unwrap_or(value_kind);
+                    if kind == Kind::Any && value_kind != Kind::Any {
+                        self.box_value(slot, value_kind)?;
+                        self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n",
                             local_offset(index)
-                        )),
-                        Kind::Number | Kind::Boolean => self.text.push_str(&format!(
-                            "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
-                            stack_offset(slot),
-                            local_offset(index)
-                        )),
-                        Kind::Unknown => {
-                            return Err(format!("Nano native: tipo desconhecido ao armazenar '{var}' em '{name}'"));
+                        ));
+                    } else {
+                        match kind {
+                            Kind::Text | Kind::Function | Kind::Null | Kind::Any => self.text.push_str(&format!(
+                                "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
+                                stack_offset(slot),
+                                local_offset(index)
+                            )),
+                            Kind::Number | Kind::Boolean => self.text.push_str(&format!(
+                                "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
+                                stack_offset(slot),
+                                local_offset(index)
+                            )),
+                            Kind::Unknown => {
+                                return Err(format!("Nano native: tipo desconhecido ao armazenar '{var}' em '{name}'"));
+                            }
                         }
                     }
                 }
