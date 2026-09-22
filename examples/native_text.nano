@@ -1,7 +1,8 @@
-function identity(value) {
-    return value
-}
-
 message = "native-text"
 print(message)
-print(identity("native-return"))
+
+function text_value() {
+    return "native-return"
+}
+
+print(text_value())
