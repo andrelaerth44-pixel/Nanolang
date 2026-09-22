@@ -1,0 +1,5 @@
+# Módulo de modelo Nano 0.7
+
+function forward(x, w) {
+    return matmul(x, w)
+}
