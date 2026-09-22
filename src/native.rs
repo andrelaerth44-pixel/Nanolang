@@ -933,6 +933,81 @@ fn initial_locals(params: &[String], code: &[IrInst]) -> Result<HashMap<String, 
     Ok(locals)
 }
 
+fn infer_call_value_targets(code: &[IrInst]) -> HashMap<usize, String> {
+    let mut targets = HashMap::new();
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut locals: HashMap<String, String> = HashMap::new();
+
+    for (ip, inst) in code.iter().enumerate() {
+        match inst {
+            IrInst::Const(Value::Function(function)) => stack.push(Some(function.clone())),
+            IrInst::Const(_) => stack.push(None),
+            IrInst::Load(var) => stack.push(locals.get(var).cloned()),
+            IrInst::Store(var) => {
+                match stack.pop().flatten() {
+                    Some(function) => { locals.insert(var.clone(), function); }
+                    None => { locals.remove(var); }
+                }
+            }
+            IrInst::Binary(_) => {
+                stack.pop();
+                stack.pop();
+                stack.push(None);
+            }
+            IrInst::Unary(_) => {
+                stack.pop();
+                stack.push(None);
+            }
+            IrInst::Call(_, count) => {
+                for _ in 0..*count { stack.pop(); }
+                stack.push(None);
+            }
+            IrInst::CallValue(count) => {
+                if let Some(function) = stack.get(stack.len().saturating_sub(count + 1)).and_then(Clone::clone) {
+                    targets.insert(ip, function);
+                }
+                for _ in 0..(*count + 1) { stack.pop(); }
+                stack.push(None);
+            }
+            IrInst::Print | IrInst::Pop => { stack.pop(); }
+            IrInst::JumpIfFalse(_) => { stack.pop(); }
+            IrInst::Jump(_) => {}
+            IrInst::Return => { stack.pop(); }
+            IrInst::MakeList(count) => {
+                for _ in 0..*count { stack.pop(); }
+                stack.push(None);
+            }
+            IrInst::MakeObject(keys) => {
+                for _ in 0..keys.len() { stack.pop(); }
+                stack.push(None);
+            }
+            IrInst::Index => {
+                stack.pop();
+                stack.pop();
+                stack.push(None);
+            }
+            IrInst::Field(_) => {
+                stack.pop();
+                stack.push(None);
+            }
+            IrInst::SetIndex => {
+                stack.pop();
+                stack.pop();
+                stack.pop();
+                stack.push(None);
+            }
+            IrInst::SetField(_) => {
+                stack.pop();
+                stack.pop();
+                stack.push(None);
+            }
+            IrInst::IterInit | IrInst::IterNext(_, _) | IrInst::Use(_) | IrInst::FusedMulAdd => {}
+        }
+    }
+
+    targets
+}
+
 fn analyze_stack(
     code: &[IrInst],
     name: &str,
@@ -952,6 +1027,7 @@ fn analyze_stack(
         local_kinds.insert(param.clone(), kind);
     }
     let mut calls = Vec::<(String, Vec<Kind>)>::new();
+    let call_value_targets = infer_call_value_targets(code);
     let mut work = VecDeque::new();
     if !code.is_empty() {
         states[0] = Some(Vec::new());
@@ -1136,17 +1212,30 @@ fn analyze_stack(
                 if *count > 8 {
                     return Err(format!("Nano native: chamada indireta tem mais de 8 argumentos em '{name}'"));
                 }
-                for _ in 0..*count {
-                    let value = next.pop().ok_or_else(|| format!("Nano native: chamada indireta sem argumento em '{name}'"))?;
+                let function_slot = next.len().checked_sub(*count + 1)
+                    .ok_or_else(|| format!("Nano native: chamada indireta sem alvo em '{name}'"))?;
+                let mut arg_kinds = Vec::with_capacity(*count);
+                for index in function_slot + 1..next.len() {
+                    let value = next[index];
                     if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean) {
                         return Err(format!("Nano native: chamada indireta aceita apenas argumentos escalares em '{name}'"));
                     }
+                    arg_kinds.push(value);
                 }
-                let target = next.pop().ok_or_else(|| format!("Nano native: chamada indireta sem alvo em '{name}'"))?;
-                if target != Kind::Function {
-                    return Err(format!("Nano native: alvo de chamada indireta deve ser Function em '{name}'"));
+                let target = next[function_slot];
+                for _ in 0..(*count + 1) {
+                    next.pop().ok_or_else(|| format!("Nano native: chamada indireta sem operandos em '{name}'"))?;
                 }
-                next.push(Kind::Number);
+
+                if let Some(callee) = call_value_targets.get(&ip) {
+                    calls.push((callee.clone(), arg_kinds));
+                    next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
+                } else {
+                    if target != Kind::Function {
+                        return Err(format!("Nano native: alvo de chamada indireta deve ser Function em '{name}'"));
+                    }
+                    next.push(Kind::Number);
+                }
             }
             IrInst::Print => {
                 next.pop().ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
