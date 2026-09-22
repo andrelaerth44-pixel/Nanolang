@@ -907,6 +907,7 @@ impl Semantic {
                 Value::Number(_) => Type::Number,
                 Value::Text(_) => Type::Text,
                 Value::Boolean(_) => Type::Boolean,
+                Value::Function(_) => Type::Function,
                 Value::List(_) => Type::List,
                 Value::Object(_) => Type::Object,
                 Value::Tensor(_) => Type::Tensor,
