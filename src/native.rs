@@ -416,6 +416,9 @@ impl NativeModule {
                             "    movq %rax, {}(%rbp)\n",
                             stack_offset(start)
                         )),
+                        Kind::Unknown => {
+                            return Err(format!("Nano native: chamada '{callee}' retornou tipo desconhecido"));
+                        }
                         _ => self.text.push_str(&format!(
                             "    movsd %xmm0, {}(%rbp)\n",
                             stack_offset(start)
@@ -469,6 +472,9 @@ impl NativeModule {
                                 stack_offset(slot)
                             ));
                         }
+                        Kind::Unknown => {
+                            return Err(format!("Nano native: print recebeu tipo desconhecido em '{name}'"));
+                        }
                     }
                 }
                 IrInst::Pop => {}
@@ -501,6 +507,9 @@ impl NativeModule {
                             "    movq {}(%rbp), %rax\n",
                             stack_offset(slot)
                         )),
+                        Kind::Unknown => {
+                            return Err(format!("Nano native: retorno de tipo desconhecido em '{name}'"));
+                        }
                         _ => self.load_stack(slot, "%xmm0"),
                     }
                     self.text.push_str("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
@@ -638,7 +647,7 @@ fn analyze_stack(
             }
             IrInst::Store(var) => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function | Kind::Text) {
+                if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Function | Kind::Text) {
                     return Err(format!("Nano native: variável '{var}' tem um tipo que o backend não suporta"));
                 }
                 match local_kinds.get(var).copied() {
@@ -698,7 +707,7 @@ fn analyze_stack(
                         next.push(Kind::Number);
                     }
                     crate::UnaryOp::Not => {
-                        if !matches!(value, Kind::Number | Kind::Boolean) {
+                        if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean) {
                             return Err(format!("Nano native: operador {:?} exige valor lógico", op));
                         }
                         next.push(Kind::Boolean);
@@ -733,7 +742,7 @@ fn analyze_stack(
                 }
                 for _ in 0..*count {
                     let value = next.pop().ok_or_else(|| format!("Nano native: chamada indireta sem argumento em '{name}'"))?;
-                    if !matches!(value, Kind::Number | Kind::Boolean) {
+                    if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean) {
                         return Err(format!("Nano native: chamada indireta aceita apenas argumentos escalares em '{name}'"));
                     }
                 }
@@ -751,7 +760,7 @@ fn analyze_stack(
             }
             IrInst::JumpIfFalse(_) => {
                 let condition = next.pop().ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
-                if !matches!(condition, Kind::Number | Kind::Boolean) {
+                if !matches!(condition, Kind::Unknown | Kind::Number | Kind::Boolean) {
                     return Err(format!("Nano native: condição precisa ser Number ou Boolean em '{name}'"));
                 }
             }
