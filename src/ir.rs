@@ -3,6 +3,11 @@ use crate::dtype::DType;
 use crate::memory::MemoryPlanner;
 use std::path::{Path, PathBuf};
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::process::{Child, Command};
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 use super::{backend, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
 use backend::{ElementwiseOp, TensorBackend};
@@ -292,6 +297,10 @@ pub(crate) struct IrRuntime {
     memory: MemoryPlanner,
     loaded_modules: HashSet<PathBuf>,
     module_stack: Vec<PathBuf>,
+    next_handle: u64,
+    tcp_streams: HashMap<u64, TcpStream>,
+    tcp_listeners: HashMap<u64, TcpListener>,
+    children: HashMap<u64, Child>,
 }
 
 impl IrRuntime {
@@ -328,6 +337,10 @@ impl IrRuntime {
             memory: MemoryPlanner::new(),
             loaded_modules: HashSet::new(),
             module_stack: Vec::new(),
+            next_handle: 1,
+            tcp_streams: HashMap::new(),
+            tcp_listeners: HashMap::new(),
+            children: HashMap::new(),
         })
     }
 
@@ -465,6 +478,177 @@ impl IrRuntime {
     }
 
     fn call(&mut self, name: &str, args: Vec<Value>) -> Result<Value, String> {
+        if name == "fs_read_text" {
+            if args.len() != 1 { return Err("Nano: fs_read_text() recebe caminho".into()); }
+            let path = text_arg(&args[0], "caminho")?;
+            return fs::read_to_string(&path)
+                .map(Value::Text)
+                .map_err(|e| format!("Nano: fs_read_text('{path}'): {e}"));
+        }
+
+        if name == "fs_write_text" || name == "fs_append_text" {
+            if args.len() != 2 { return Err(format!("Nano: {name}() recebe caminho e texto")); }
+            let path = text_arg(&args[0], "caminho")?;
+            let content = text_arg(&args[1], "texto")?;
+            let result = if name == "fs_write_text" {
+                fs::write(&path, content)
+            } else {
+                let mut file = fs::OpenOptions::new().create(true).append(true).open(&path)
+                    .map_err(|e| format!("Nano: fs_append_text('{path}'): {e}"))?;
+                file.write_all(content.as_bytes())
+            };
+            result.map(|_| Value::Null).map_err(|e| format!("Nano: {name}('{path}'): {e}"))
+        }
+
+        if name == "fs_exists" {
+            if args.len() != 1 { return Err("Nano: fs_exists() recebe caminho".into()); }
+            return Ok(Value::Boolean(text_arg(&args[0], "caminho")?.as_path().exists()));
+        }
+
+        if name == "fs_list" {
+            if args.len() != 1 { return Err("Nano: fs_list() recebe diretório".into()); }
+            let path = text_arg(&args[0], "diretório")?;
+            let mut items = Vec::new();
+            for entry in fs::read_dir(&path).map_err(|e| format!("Nano: fs_list('{path}'): {e}"))? {
+                let entry = entry.map_err(|e| format!("Nano: fs_list('{path}'): {e}"))?;
+                items.push(Value::Text(entry.file_name().to_string_lossy().into_owned()));
+            }
+            items.sort_by(|a,b| a.show().cmp(&b.show()));
+            return Ok(Value::List(items));
+        }
+
+        if name == "fs_mkdir" {
+            if args.len() != 1 { return Err("Nano: fs_mkdir() recebe diretório".into()); }
+            let path = text_arg(&args[0], "diretório")?;
+            fs::create_dir_all(&path).map(|_| Value::Null)
+                .map_err(|e| format!("Nano: fs_mkdir('{path}'): {e}"))
+        }
+
+        if name == "fs_remove" {
+            if args.len() != 1 { return Err("Nano: fs_remove() recebe caminho".into()); }
+            let path = text_arg(&args[0], "caminho")?;
+            let metadata = fs::metadata(&path).map_err(|e| format!("Nano: fs_remove('{path}'): {e}"))?;
+            if metadata.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) }
+                .map(|_| Value::Null)
+                .map_err(|e| format!("Nano: fs_remove('{path}'): {e}"))
+        }
+
+        if name == "env_get" {
+            if args.len() != 1 { return Err("Nano: env_get() recebe nome".into()); }
+            let key = text_arg(&args[0], "nome")?;
+            return Ok(match std::env::var(&key) { Ok(v) => Value::Text(v), Err(_) => Value::Null });
+        }
+
+        if name == "env_set" {
+            if args.len() != 2 { return Err("Nano: env_set() recebe nome e valor".into()); }
+            let key = text_arg(&args[0], "nome")?;
+            let value = text_arg(&args[1], "valor")?;
+            std::env::set_var(&key, &value);
+            return Ok(Value::Null);
+        }
+
+        if name == "time_now_ms" {
+            if !args.is_empty() { return Err("Nano: time_now_ms() não recebe argumentos".into()); }
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)
+                .map_err(|e| format!("Nano: relógio do sistema: {e}"))?;
+            return Ok(Value::Number(now.as_millis() as f64));
+        }
+
+        if name == "time_sleep_ms" || name == "thread_sleep_ms" {
+            if args.len() != 1 { return Err(format!("Nano: {name}() recebe milissegundos")); }
+            let ms = number_arg(&args[0], "milissegundos")?;
+            if ms < 0.0 { return Err("Nano: duração não pode ser negativa".into()); }
+            thread::sleep(Duration::from_millis(ms as u64));
+            return Ok(Value::Null);
+        }
+
+        if name == "process_spawn" {
+            if args.len() != 2 { return Err("Nano: process_spawn() recebe comando e lista de argumentos".into()); }
+            let command = text_arg(&args[0], "comando")?;
+            let argv = text_list_arg(&args[1], "argumentos")?;
+            let child = Command::new(&command).args(argv).spawn()
+                .map_err(|e| format!("Nano: não foi possível iniciar '{command}': {e}"))?;
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            let pid = child.id() as f64;
+            self.children.insert(handle, child);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "process_wait" {
+            if args.len() != 1 { return Err("Nano: process_wait() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let mut child = self.children.remove(&handle).ok_or_else(|| format!("Nano: processo {handle} não encontrado"))?;
+            let status = child.wait().map_err(|e| format!("Nano: process_wait(): {e}"))?;
+            return Ok(Value::Number(status.code().unwrap_or(-1) as f64));
+        }
+
+        if name == "net_tcp_connect" {
+            if args.len() != 2 { return Err("Nano: net_tcp_connect() recebe host e porta".into()); }
+            let host = text_arg(&args[0], "host")?;
+            let port = integer_arg(&args[1], "porta")?;
+            let stream = TcpStream::connect((host.as_str(), port as u16))
+                .map_err(|e| format!("Nano: conexão TCP: {e}"))?;
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            self.tcp_streams.insert(handle, stream);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "net_tcp_listen" {
+            if args.len() != 2 { return Err("Nano: net_tcp_listen() recebe host e porta".into()); }
+            let host = text_arg(&args[0], "host")?;
+            let port = integer_arg(&args[1], "porta")?;
+            let listener = TcpListener::bind((host.as_str(), port as u16))
+                .map_err(|e| format!("Nano: listener TCP: {e}"))?;
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            self.tcp_listeners.insert(handle, listener);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "net_tcp_accept" {
+            if args.len() != 1 { return Err("Nano: net_tcp_accept() recebe listener".into()); }
+            let handle = integer_arg(&args[0], "listener")?;
+            let listener = self.tcp_listeners.get(&handle)
+                .ok_or_else(|| format!("Nano: listener {handle} não encontrado"))?;
+            let (stream, _) = listener.accept().map_err(|e| format!("Nano: accept(): {e}"))?;
+            let stream_handle = self.next_handle;
+            self.next_handle += 1;
+            self.tcp_streams.insert(stream_handle, stream);
+            return Ok(Value::Number(stream_handle as f64));
+        }
+
+        if name == "net_tcp_send" {
+            if args.len() != 2 { return Err("Nano: net_tcp_send() recebe stream e texto".into()); }
+            let handle = integer_arg(&args[0], "stream")?;
+            let payload = text_arg(&args[1], "texto")?;
+            let stream = self.tcp_streams.get_mut(&handle)
+                .ok_or_else(|| format!("Nano: stream {handle} não encontrado"))?;
+            let bytes = stream.write(payload.as_bytes()).map_err(|e| format!("Nano: send(): {e}"))?;
+            return Ok(Value::Number(bytes as f64));
+        }
+
+        if name == "net_tcp_recv" {
+            if args.len() != 2 { return Err("Nano: net_tcp_recv() recebe stream e máximo de bytes".into()); }
+            let handle = integer_arg(&args[0], "stream")?;
+            let max = integer_arg(&args[1], "máximo")?.max(1) as usize;
+            let stream = self.tcp_streams.get_mut(&handle)
+                .ok_or_else(|| format!("Nano: stream {handle} não encontrado"))?;
+            let mut buf = vec![0u8; max];
+            let bytes = stream.read(&mut buf).map_err(|e| format!("Nano: recv(): {e}"))?;
+            buf.truncate(bytes);
+            return Ok(Value::Text(String::from_utf8_lossy(&buf).into_owned()));
+        }
+
+        if name == "net_tcp_close" {
+            if args.len() != 1 { return Err("Nano: net_tcp_close() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            self.tcp_streams.remove(&handle);
+            self.tcp_listeners.remove(&handle);
+            return Ok(Value::Null);
+        }
+
         if name == "len" {
             if args.len() != 1 {
                 return Err("Nano: len() recebe 1 argumento".into());
@@ -792,6 +976,10 @@ impl IrRuntime {
     }
 
     fn load_module(&mut self, path: &str) -> Result<(), String> {
+        if path.starts_with("std.") {
+            self.loaded_modules.insert(PathBuf::from(path));
+            return Ok(());
+        }
         let requested = Path::new(path);
         let resolved = if requested.is_absolute() {
             requested.to_path_buf()
@@ -843,6 +1031,28 @@ impl IrRuntime {
         }
 
         result
+    }
+}
+
+
+fn text_arg(value: &Value, label: &str) -> Result<String, String> {
+    match value { Value::Text(v) => Ok(v.clone()), _ => Err(format!("Nano: {label} requer Text")) }
+}
+
+fn number_arg(value: &Value, label: &str) -> Result<f64, String> {
+    match value { Value::Number(v) => Ok(*v), _ => Err(format!("Nano: {label} requer Number")) }
+}
+
+fn integer_arg(value: &Value, label: &str) -> Result<u64, String> {
+    let n = number_arg(value, label)?;
+    if n < 0.0 || !n.is_finite() || n.fract() != 0.0 { return Err(format!("Nano: {label} requer inteiro não negativo")); }
+    Ok(n as u64)
+}
+
+fn text_list_arg(value: &Value, label: &str) -> Result<Vec<String>, String> {
+    match value {
+        Value::List(items) => items.iter().map(|item| text_arg(item, label)).collect(),
+        _ => Err(format!("Nano: {label} requer List de Text")),
     }
 }
 
