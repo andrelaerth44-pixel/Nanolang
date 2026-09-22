@@ -63,10 +63,19 @@ jobs:
           diff -u /tmp/nano-native.expected /tmp/nano-native.out
           test "$native_status" -eq 0
 
-      - name: Language and self-host checks
+      - name: Self-host source checks
         run: |
           cargo run --quiet --bin nano -- check selfhost/lexer.nano
-          cargo run --quiet -- check selfhost/parser.nano
-          cargo run --quiet -- check selfhost/compiler.nano
-          cargo run --quiet -- check examples/ui.nano
-          cargo run --quiet --bin nano -- test tests
+          cargo run --quiet --bin nano -- check selfhost/parser.nano
+          cargo run --quiet --bin nano -- check selfhost/compiler.nano
+
+      - name: Self-host bootstrap
+        run: |
+          cargo run --quiet --bin nano -- check selfhost/bootstrap.nano
+          cargo run --quiet --bin nano -- run selfhost/bootstrap.nano
+
+      - name: UI syntax check
+        run: cargo run --quiet --bin nano -- check examples/ui.nano
+
+      - name: Nano integration tests
+        run: cargo run --quiet --bin nano -- test tests
