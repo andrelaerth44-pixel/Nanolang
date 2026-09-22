@@ -320,7 +320,7 @@ impl Tensor {
 
 #[derive(Debug, Clone)]
 enum Value {
-    Number(f64), Text(String), Boolean(bool),
+    Number(f64), Text(String), Boolean(bool), Function(String),
     List(Vec<Value>), Object(HashMap<String, Value>), Tensor(TensorRef), Null
 }
 
@@ -330,6 +330,7 @@ impl PartialEq for Value {
             (Self::Number(a), Self::Number(b)) => a == b,
             (Self::Text(a), Self::Text(b)) => a == b,
             (Self::Boolean(a), Self::Boolean(b)) => a == b,
+            (Self::Function(a), Self::Function(b)) => a == b,
             (Self::List(a), Self::List(b)) => a == b,
             (Self::Object(a), Self::Object(b)) => a == b,
             (Self::Tensor(a), Self::Tensor(b)) => a.borrow().id == b.borrow().id,
@@ -343,6 +344,7 @@ impl Value {
     fn truthy(&self) -> bool {
         match self {
             Self::Boolean(v) => *v,
+            Self::Function(_) => true,
             Self::Number(v) => *v != 0.0,
             Self::Text(v) => !v.is_empty(),
             Self::List(v) => !v.is_empty(),
@@ -357,6 +359,7 @@ impl Value {
             Self::Number(v) => v.to_string(),
             Self::Text(v) => v.clone(),
             Self::Boolean(v) => v.to_string(),
+            Self::Function(v) => format!("<function {v}>"),
             Self::List(v) => format!("[{}]", v.iter().map(|x| x.show()).collect::<Vec<_>>().join(", ")),
             Self::Object(v) => {
                 let mut items = v.iter().map(|(k, val)| format!("{}: {}", k, val.show())).collect::<Vec<_>>();
@@ -371,7 +374,7 @@ impl Value {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Type {
-    Number, Text, Boolean, List, Object, Tensor, Null, Any,
+    Number, Text, Boolean, Function, List, Object, Tensor, Null, Any,
 }
 
 impl Type {
@@ -380,6 +383,7 @@ impl Type {
             Self::Number => "Number",
             Self::Text => "Text",
             Self::Boolean => "Boolean",
+            Self::Function => "Function",
             Self::List => "List",
             Self::Object => "Object",
             Self::Tensor => "Tensor",
@@ -392,7 +396,7 @@ impl Type {
 #[derive(Debug, Clone)]
 enum Expr {
     Value(Value), Var(String), List(Vec<Expr>), Object(Vec<(String, Expr)>),
-    Binary(Box<Expr>, Op, Box<Expr>), Unary(UnaryOp, Box<Expr>), Call(String, Vec<Expr>),
+    Binary(Box<Expr>, Op, Box<Expr>), Unary(UnaryOp, Box<Expr>), Call(Box<Expr>, Vec<Expr>),
     Index(Box<Expr>, Box<Expr>), Field(Box<Expr>, String),
 }
 
@@ -685,8 +689,6 @@ impl Parser {
             match self.peek() {
                 Token::LeftParen => {
                     self.advance();
-                    let name = qualified_name(&expr)
-                        .ok_or_else(|| "Nano: chamada requer um nome de função ou namespace qualificado".to_string())?;
                     let mut args = Vec::new();
                     if !matches!(self.peek(), Token::RightParen) {
                         loop {
@@ -696,7 +698,7 @@ impl Parser {
                         }
                     }
                     self.expect(Token::RightParen)?;
-                    expr = Expr::Call(name, args);
+                    expr = Expr::Call(Box::new(expr), args);
                 }
                 Token::LeftBracket => {
                     self.advance();
