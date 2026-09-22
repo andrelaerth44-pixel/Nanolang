@@ -921,6 +921,50 @@ impl Semantic {
             }
             Expr::Call(name, args) => {
                 for arg in args { self.expr_type(arg)?; }
+                let name = match name.as_str() {
+                    "std.fs.read_text" => "fs_read_text",
+                    "std.fs.write_text" => "fs_write_text",
+                    "std.fs.append_text" => "fs_append_text",
+                    "std.fs.exists" => "fs_exists",
+                    "std.fs.list" => "fs_list",
+                    "std.fs.mkdir" => "fs_mkdir",
+                    "std.fs.remove" => "fs_remove",
+                    "std.process.spawn" => "process_spawn",
+                    "std.process.wait" => "process_wait",
+                    "std.time.now_ms" => "time_now_ms",
+                    "std.time.sleep_ms" => "time_sleep_ms",
+                    "std.net.tcp_connect" => "net_tcp_connect",
+                    "std.net.tcp_listen" => "net_tcp_listen",
+                    "std.net.tcp_accept" => "net_tcp_accept",
+                    "std.net.tcp_send" => "net_tcp_send",
+                    "std.net.tcp_recv" => "net_tcp_recv",
+                    "std.net.tcp_close" => "net_tcp_close",
+                    "std.net.http_get" | "std.http.get" => "net_http_get",
+                    "std.env.get" => "env_get",
+                    "std.env.set" => "env_set",
+                    "std.math.abs" => "abs",
+                    "std.math.sqrt" => "sqrt",
+                    "std.math.floor" => "floor",
+                    "std.math.ceil" => "ceil",
+                    "std.math.round" => "round",
+                    "std.math.sin" => "sin",
+                    "std.math.cos" => "cos",
+                    "std.math.tan" => "tan",
+                    "std.math.exp" => "exp",
+                    "std.math.log" => "log",
+                    "std.math.pow" => "pow",
+                    "std.math.min" => "min",
+                    "std.math.max" => "max",
+                    "std.ui.window" => "ui_window",
+                    "std.ui.set_title" => "ui_set_title",
+                    "std.ui.close" => "ui_close",
+                    "std.ui.poll_event" => "ui_poll_event",
+                    "std.async.channel" => "channel",
+                    "std.async.send" => "send",
+                    "std.async.recv" => "recv",
+                    "std.async.close_channel" => "close_channel",
+                    other => other,
+                };
                 if name == "assert" {
                     if args.len() != 1 && args.len() != 2 {
                         return Err("Nano: assert() recebe condição e, opcionalmente, mensagem".into());
@@ -953,6 +997,64 @@ impl Semantic {
                 if name == "close_channel" || name == "std.async.close_channel" {
                     if args.len() != 1 { return Err("Nano: close_channel() recebe canal".into()); }
                     return Ok(Type::Null);
+                }
+                if name == "fs_read_text" {
+                    if args.len() != 1 || self.expr_type(&args[0])? != Type::Text {
+                        return Err("Nano: fs_read_text() requer Text".into());
+                    }
+                    return Ok(Type::Text);
+                }
+                if name == "fs_write_text" || name == "fs_append_text" {
+                    if args.len() != 2 {
+                        return Err(format!("Nano: {name}() recebe caminho e texto"));
+                    }
+                    if (self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any)
+                        || (self.expr_type(&args[1])? != Type::Text && self.expr_type(&args[1])? != Type::Any) {
+                        return Err(format!("Nano: {name}() requer Text, Text"));
+                    }
+                    return Ok(Type::Null);
+                }
+                if name == "fs_exists" || name == "fs_remove" || name == "fs_list" || name == "fs_mkdir" {
+                    if args.len() != 1 || (self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any) {
+                        return Err(format!("Nano: {name}() requer caminho Text"));
+                    }
+                    return Ok(if name == "fs_list" { Type::List } else if name == "fs_exists" { Type::Boolean } else { Type::Null });
+                }
+                if name == "env_get" {
+                    if args.len() != 1 || (self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any) {
+                        return Err("Nano: env_get() requer nome Text".into());
+                    }
+                    return Ok(Type::Any);
+                }
+                if name == "env_set" {
+                    if args.len() != 2 {
+                        return Err("Nano: env_set() recebe nome e valor".into());
+                    }
+                    return Ok(Type::Null);
+                }
+                if name == "process_spawn" {
+                    if args.len() != 2 {
+                        return Err("Nano: process_spawn() recebe comando e lista de argumentos".into());
+                    }
+                    return Ok(Type::Number);
+                }
+                if name == "process_wait" {
+                    if args.len() != 1 {
+                        return Err("Nano: process_wait() recebe handle".into());
+                    }
+                    return Ok(Type::Number);
+                }
+                if name == "net_tcp_connect" {
+                    if args.len() != 2 { return Err("Nano: net_tcp_connect() recebe host e porta".into()); }
+                    return Ok(Type::Number);
+                }
+                if name == "net_tcp_listen" {
+                    if args.len() != 2 { return Err("Nano: net_tcp_listen() recebe host e porta".into()); }
+                    return Ok(Type::Number);
+                }
+                if name == "net_tcp_accept" || name == "net_tcp_send" || name == "net_tcp_recv" || name == "net_tcp_close" {
+                    if args.is_empty() { return Err(format!("Nano: {name}() recebe argumentos")); }
+                    return Ok(match name { "net_tcp_recv" => Type::Text, "net_tcp_close" => Type::Null, _ => Type::Any });
                 }
                 if name == "len" {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
