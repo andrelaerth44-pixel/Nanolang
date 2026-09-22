@@ -908,13 +908,23 @@ impl Semantic {
             }
             let source = fs::read_to_string(path)
                 .map_err(|e| format!("Nano: não foi possível carregar módulo '{path}' para análise semântica: {e}"))?;
-            let tokens = Lexer::new(&source).lex()?;
-            let imported = Parser::new(tokens).program()
-                .map_err(|e| format!("Nano: módulo '{path}' na análise semântica: {e}"))?;
-            for item in imported {
-                if let Stmt::Function(name, params, _) = item {
-                    self.functions.entry(name).or_insert((params.len(), Type::Any));
-                }
+            // Register imported function signatures without recursively parsing the
+            // module here. The runtime/compiler loads and validates the module itself;
+            // semantic analysis only needs exported call names/arity at this stage.
+            for line in source.lines() {
+                let trimmed = line.trim();
+                let Some(rest) = trimmed.strip_prefix("function ") else { continue; };
+                let Some(open) = rest.find('(') else { continue; };
+                let name = rest[..open].trim();
+                if name.is_empty() { continue; }
+                let Some(close_rel) = rest[open + 1..].find(')') else { continue; };
+                let params_text = &rest[open + 1..open + 1 + close_rel];
+                let arity = if params_text.trim().is_empty() {
+                    0
+                } else {
+                    params_text.split(',').count()
+                };
+                self.functions.entry(name.to_string()).or_insert((arity, Type::Any));
             }
         }
 
