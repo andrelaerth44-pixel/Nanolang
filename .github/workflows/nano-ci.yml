@@ -47,7 +47,8 @@ jobs:
 
       - name: Native CPU end to end
         run: |
-          cargo run --quiet --bin nano -- build --native examples/native.nano -o /tmp/nano-native
+          NANO_KEEP_ASM=1 cargo run --quiet --bin nano -- build --native examples/native.nano -o /tmp/nano-native
+          if [ -f /tmp/nano-native.s ]; then sed -n '1,420p' /tmp/nano-native.s; fi
           /tmp/nano-native > /tmp/nano-native.out
           printf '5\n6\n2\ntrue\n1\n' > /tmp/nano-native.expected
           diff -u /tmp/nano-native.expected /tmp/nano-native.out
