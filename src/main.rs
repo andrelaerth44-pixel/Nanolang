@@ -1,4 +1,4 @@
-mod ir;
+mod backend;\nmod ir;
 
 use std::{cell::RefCell, env, fs, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
