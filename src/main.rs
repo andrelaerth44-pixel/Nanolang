@@ -15,7 +15,7 @@ use half::{bf16, f16};
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Ident(String), Number(f64), Text(String),
-    True, False, Null, Use, Function, Print, If, Else, Return, While, For, In,
+    True, False, Null, Use, Function, Print, If, Else, Return, Break, While, For, In,
     Plus, Minus, Star, Slash, Percent, Equal, EqualEqual, BangEqual,
     And, Or, Bang,
     Greater, GreaterEqual, Less, LessEqual,
@@ -126,7 +126,7 @@ impl Lexer {
             "use" => Token::Use, "function" => Token::Function,
             "print" => Token::Print, "if" => Token::If,
             "else" => Token::Else, "return" => Token::Return,
-            "while" => Token::While, "for" => Token::For, "in" => Token::In,
+            "while" => Token::While, "break" => Token::Break, "for" => Token::For, "in" => Token::In,
             s => Token::Ident(s.to_string()),
         }
     }
@@ -406,6 +406,7 @@ enum Stmt {
     If(Expr, Vec<Stmt>, Vec<Stmt>),
     While(Expr, Vec<Stmt>),
     For(String, Expr, Vec<Stmt>),
+    Break,
     Use(String), Function(String, Vec<String>, Vec<Stmt>),
     Return(Expr),
 }
@@ -451,6 +452,7 @@ impl Parser {
             Token::If => self.if_stmt(),
             Token::While => self.while_stmt(),
             Token::For => self.for_stmt(),
+            Token::Break => { self.advance(); Ok(Stmt::Break) }
             Token::Return => { self.advance(); Ok(Stmt::Return(self.expression()?)) }
             Token::Ident(name) => {
                 let name = name.clone();
@@ -697,11 +699,12 @@ impl Parser {
 struct Semantic {
     vars: HashMap<String, Type>,
     functions: HashMap<String, (usize, Type)>,
+    loop_depth: usize,
 }
 
 impl Semantic {
     fn new() -> Self {
-        Self { vars: HashMap::new(), functions: HashMap::new() }
+        Self { vars: HashMap::new(), functions: HashMap::new(), loop_depth: 0 }
     }
 
     fn check(&mut self, program: &[Stmt]) -> Result<(), String> {
@@ -743,6 +746,7 @@ impl Semantic {
         }
 
         self.vars = saved;
+        self.loop_depth = 0;
         Ok(())
     }
 
@@ -770,16 +774,20 @@ impl Semantic {
                 for s in no { self.check_stmt_with_return(s, return_type, saw_return)?; }
                 Ok(())
             }
-            Stmt::While(cond, body) => {
+            Stmt::While(cond, body) {
                 let cond_type = self.expr_type(cond)?;
                 self.expect_type(cond_type, &[Type::Boolean, Type::Number, Type::Text, Type::List, Type::Object, Type::Null, Type::Any], "condição")?;
+                self.loop_depth += 1;
                 for s in body { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                self.loop_depth -= 1;
                 Ok(())
             }
             Stmt::For(name, iterable, body) => {
                 self.expr_type(iterable)?;
                 let previous = self.vars.insert(name.clone(), Type::Any);
+                self.loop_depth += 1;
                 for s in body { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                self.loop_depth -= 1;
                 match previous {
                     Some(ty) => { self.vars.insert(name.clone(), ty); }
                     None => { self.vars.remove(name); }
@@ -811,16 +819,26 @@ impl Semantic {
             }
             Stmt::While(cond, body) => {
                 self.expr_type(cond)?;
+                self.loop_depth += 1;
                 for s in body { self.check_stmt(s)?; }
+                self.loop_depth -= 1;
                 Ok(())
             }
             Stmt::For(name, iterable, body) => {
                 self.expr_type(iterable)?;
                 let previous = self.vars.insert(name.clone(), Type::Any);
+                self.loop_depth += 1;
                 for s in body { self.check_stmt(s)?; }
+                self.loop_depth -= 1;
                 match previous {
                     Some(ty) => { self.vars.insert(name.clone(), ty); }
                     None => { self.vars.remove(name); }
+                }
+                Ok(())
+            }
+            Stmt::Break => {
+                if self.loop_depth == 0 {
+                    return Err("Nano: break só pode ser usado dentro de while ou for".into());
                 }
                 Ok(())
             }
