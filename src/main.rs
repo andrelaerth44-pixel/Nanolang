@@ -2017,8 +2017,55 @@ fn collect_nano_files(dir: &Path, output: &mut Vec<std::path::PathBuf>) -> Resul
     Ok(())
 }
 
+fn run_selfhost_native(source_path: &str, output_path: &str) -> Result<(), String> {
+    let exe = env::current_exe().map_err(|e| format!("Nano selfhost: executável atual: {e}"))?;
+    let ir_path = env::temp_dir().join(format!("nano-selfhost-{}-{}.ir", process::id(), crate::next_tensor_id()));
+    let status = Command::new(&exe)
+        .arg("run")
+        .arg("selfhost/bootstrap.nano")
+        .env("NANO_SELFHOST_INPUT", source_path)
+        .env("NANO_SELFHOST_OUTPUT", &ir_path)
+        .status()
+        .map_err(|e| format!("Nano selfhost: não foi possível executar bootstrap: {e}"))?;
+    if !status.success() {
+        let _ = fs::remove_file(&ir_path);
+        return Err(format!("Nano selfhost: bootstrap terminou com código {:?}", status.code()));
+    }
+
+    let text = fs::read_to_string(&ir_path)
+        .map_err(|e| format!("Nano selfhost: não foi possível ler IR: {e}"))?;
+    let _ = fs::remove_file(&ir_path);
+
+    let program = selfhost_native::parse(&text)?;
+    native::build(&program, Path::new(output_path))?;
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(String::as_str) == Some("build") && args.iter().any(|arg| arg == "--selfhost") {
+        let source = args.iter().skip(2).find(|arg| !arg.starts_with('-') && *arg != "--selfhost").cloned().unwrap_or_else(|| "examples/main.nano".into());
+        let mut output = None;
+        let mut i = 2usize;
+        while i < args.len() {
+            if args[i] == "-o" || args[i] == "--output" {
+                i += 1;
+                output = args.get(i).cloned();
+            } else if let Some(value) = args[i].strip_prefix("--output=") {
+                output = Some(value.to_string());
+            }
+            i += 1;
+        }
+        let output = output.unwrap_or_else(|| {
+            Path::new(&source).file_stem().and_then(|v| v.to_str()).unwrap_or("nano_app").to_string()
+        });
+        if let Err(e) = run_selfhost_native(&source, &output) {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        println!("Nano: self-host nativo criado em '{}'", output);
+        return;
+    }
     let (command, path, cli_backend, cli_dtype, output) = match parse_cli(&args) {
         Ok(value) => value,
         Err(e) => {
