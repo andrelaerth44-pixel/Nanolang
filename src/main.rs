@@ -1165,6 +1165,7 @@ impl Semantic {
                     "std.env.get" => "env_get",
                     "std.env.set" => "env_set",
                     "std.math.matmul_transposed" => "matmul_transposed",
+                    "std.backend.info" => "backend_info",
                     "std.json.encode" => "json_encode",
                     "std.json.decode" => "json_decode",
                     "std.sync.mutex_new" => "sync_mutex_new",
@@ -1226,6 +1227,10 @@ impl Semantic {
                         "unwrap" => Type::Any,
                         _ => Type::Any,
                     });
+                }
+                if name == "backend_info" {
+                    if !args.is_empty() { return Err("Nano: backend.info() não recebe argumentos".into()); }
+                    return Ok(Type::Object);
                 }
                 if name == "assert" {
                     if args.len() != 1 && args.len() != 2 {
