@@ -113,6 +113,71 @@ jobs:
           cargo run --quiet --bin nano -- run examples/entrypoint.nano > /tmp/nano-entrypoint.out
           printf 'entrypoint-ok\n' > /tmp/nano-entrypoint.expected
           diff -u /tmp/nano-entrypoint.expected /tmp/nano-entrypoint.out
+      - name: Self-host native end to end
+        run: |
+          cargo run --quiet --bin nano -- build --selfhost examples/main.nano -o /tmp/nano-selfhost-native
+          /tmp/nano-selfhost-native > /tmp/nano-selfhost-native.out
+          printf 'Olá, mundo!\nNano\nadulto\n5\n' > /tmp/nano-selfhost-native.expected
+          diff -u /tmp/nano-selfhost-native.expected /tmp/nano-selfhost-native.out
+
+      - name: DAP debugger smoke test
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          p = subprocess.Popen(["cargo", "run", "--quiet", "--bin", "nano", "--", "debug", "--dap"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=False)
+
+          def send(seq, command, arguments=None):
+              payload = {"seq": seq, "type": "request", "command": command}
+              if arguments is not None:
+                  payload["arguments"] = arguments
+              raw = json.dumps(payload).encode()
+              p.stdin.write(f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw)
+              p.stdin.flush()
+
+          def read_message():
+              headers = b""
+              while b"\r\n\r\n" not in headers:
+                  chunk = p.stdout.read(1)
+                  if not chunk:
+                      raise RuntimeError("DAP encerrou cedo")
+                  headers += chunk
+              header, body_start = headers.split(b"\r\n\r\n", 1)
+              length = int([line for line in header.decode().split("\r\n") if line.lower().startswith("content-length:")][0].split(":",1)[1])
+              body = body_start
+              while len(body) < length:
+                  body += p.stdout.read(length-len(body))
+              return json.loads(body[:length])
+
+          send(1, "initialize", {"adapterID":"nano"})
+          assert read_message()["type"] == "response"
+
+          send(2, "launch", {"program":"examples/main.nano"})
+          first = read_message()
+          second = read_message()
+          assert first.get("type") == "response" or second.get("type") == "response"
+
+          send(3, "setBreakpoints", {"source":{"path":"examples/main.nano"}, "breakpoints":[{"line":3}]})
+          assert read_message()["success"]
+
+          send(4, "configurationDone")
+          assert read_message()["success"]
+
+          send(5, "threads")
+          assert read_message()["success"]
+
+          send(6, "continue")
+          assert read_message()["success"]
+          stopped = read_message()
+          assert stopped.get("event") in ("stopped", "terminated")
+
+          send(7, "disconnect", {"terminateDebuggee":True})
+          p.wait(timeout=10)
+          if p.returncode != 0:
+              sys.exit(p.returncode)
+          PY
 
       - name: Self-host source checks
         run: |
@@ -146,6 +211,8 @@ jobs:
 
       - name: UI syntax check
         run: cargo run --quiet --bin nano -- check examples/ui.nano
+      - name: UI widgets syntax check
+        run: cargo run --quiet --bin nano -- check examples/ui_widgets.nano
 
       - name: Lint check
         run: |
