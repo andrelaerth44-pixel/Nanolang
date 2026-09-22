@@ -1048,8 +1048,8 @@ fn backward(
 
 #[cfg(test)]
 mod ir_tests {
-    use super::{index_value, IrRuntime, Tensor, Value};
-    use crate::backend::BackendKind;
+    use super::{index_value, IrRuntime, Value};
+    use crate::{backend::BackendKind, Tensor};
 
     #[test]
     fn tensor_index_reads_flattened_storage() {
