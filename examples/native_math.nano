@@ -1,0 +1,8 @@
+print(abs(-4))
+print(sqrt(9))
+print(floor(3.7))
+print(ceil(3.2))
+print(round(3.6))
+print(pow(2, 3))
+print(min(2, 5))
+print(max(2, 5))
