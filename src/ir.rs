@@ -19,6 +19,7 @@ pub(crate) enum IrInst {
     Load(String),
     Store(String),
     Binary(Op),
+    Unary(crate::UnaryOp),
     FusedMulAdd,
     MakeList(usize),
     MakeObject(Vec<String>),
@@ -269,6 +270,10 @@ impl Compiler {
                 self.compile_expr(right, code)?;
                 code.push(IrInst::Binary(*op));
             }
+            Expr::Unary(op, expr) => {
+                self.compile_expr(expr, code)?;
+                code.push(IrInst::Unary(*op));
+            }
             Expr::Call(name, args) => {
                 for arg in args {
                     self.compile_expr(arg, code)?;
@@ -376,6 +381,10 @@ impl IrRuntime {
                     let right = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando direito".to_string())?;
                     let left = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando esquerdo".to_string())?;
                     stack.push(self.binary_value(left, *op, right)?);
+                }
+                IrInst::Unary(op) => {
+                    let value = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando unário".to_string())?;
+                    stack.push(unary_value(value, *op)?);
                 }
                 IrInst::FusedMulAdd => {
                     let bias = stack.pop().ok_or_else(|| "Nano IR: stack vazia no bias do FMA".to_string())?;
@@ -1244,12 +1253,25 @@ fn binary(a: Value, op: Op, b: Value) -> Result<Value, String> {
         Op::Sub => num(a, b, |x, y| x - y),
         Op::Mul => num(a, b, |x, y| x * y),
         Op::Div => num(a, b, |x, y| x / y),
+        Op::Mod => num(a, b, |x, y| x % y),
         Op::Eq => Ok(Value::Boolean(a == b)),
         Op::Ne => Ok(Value::Boolean(a != b)),
         Op::Gt => cmp(a, b, |x, y| x > y),
         Op::Ge => cmp(a, b, |x, y| x >= y),
         Op::Lt => cmp(a, b, |x, y| x < y),
         Op::Le => cmp(a, b, |x, y| x <= y),
+        Op::And => Ok(Value::Boolean(a.truthy() && b.truthy())),
+        Op::Or => Ok(Value::Boolean(a.truthy() || b.truthy())),
+    }
+}
+
+fn unary_value(value: Value, op: crate::UnaryOp) -> Result<Value, String> {
+    match op {
+        crate::UnaryOp::Neg => match value {
+            Value::Number(v) => Ok(Value::Number(-v)),
+            _ => Err("Nano: menos unário requer Number".into()),
+        },
+        crate::UnaryOp::Not => Ok(Value::Boolean(!value.truthy())),
     }
 }
 
