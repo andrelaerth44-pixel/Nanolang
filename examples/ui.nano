@@ -1,0 +1,5 @@
+window = ui_window("Nano UI", 640, 360)
+thread_sleep_ms(50)
+ui_set_title(window, "Nano UI ativo")
+thread_sleep_ms(50)
+ui_close(window)
