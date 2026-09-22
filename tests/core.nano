@@ -12,7 +12,7 @@ std.async.close_channel(channel_id)
 
 path = "tests/.nano-test.tmp"
 std.fs.write_text(path, "nano")
-assert(std.fs.exists(path), "channel-recv")
-assert(std.fs.read_text(path) == "nano", "fs-exists")
+assert(std.fs.exists(path), "fs-exists")
+assert(std.fs.read_text(path) == "fs", "fs-read")
 std.fs.remove(path)
-assert(!std.fs.exists(path), "fs-read")
+assert(!std.fs.exists(path), "fs-remove-exists")
