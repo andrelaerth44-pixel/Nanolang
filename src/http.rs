@@ -79,6 +79,7 @@ fn parse_response(response: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::parse_response;
+    use crate::Value;
 
     #[test]
     fn parses_http_response() {

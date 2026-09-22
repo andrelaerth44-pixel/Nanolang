@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use crate::dtype::DType;
 use crate::memory::MemoryPlanner;
 use crate::ui;
+use crate::sync_runtime;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::io::{Read, Write};
@@ -2804,7 +2805,7 @@ fn backward_gpu_matmul_transposed(
             true,
             left_grad_id,
             &left_shape,
-        )?;
+        ).map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     } else {
         backend.matmul_transposed_resident_async(
             upstream.borrow().id,
@@ -2815,7 +2816,7 @@ fn backward_gpu_matmul_transposed(
             !right_transpose,
             left_grad_id,
             &left_shape,
-        )?;
+        ).map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     }
     let left_grad = super::Tensor::remote_with_id(
         left_grad_id,
@@ -2824,7 +2825,7 @@ fn backward_gpu_matmul_transposed(
         backend.kind(),
         left.borrow().dtype,
         TensorOp::Leaf,
-    )?;
+    ).map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
 
     let right_grad_id = super::next_tensor_id();
     if right_transpose {
@@ -2837,7 +2838,7 @@ fn backward_gpu_matmul_transposed(
             left_transpose,
             right_grad_id,
             &right_shape,
-        )?;
+        ).map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     } else {
         backend.matmul_transposed_resident_async(
             left.borrow().id,
@@ -2848,7 +2849,7 @@ fn backward_gpu_matmul_transposed(
             false,
             right_grad_id,
             &right_shape,
-        )?;
+        ).map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     }
     let right_grad = super::Tensor::remote_with_id(
         right_grad_id,
@@ -2857,7 +2858,7 @@ fn backward_gpu_matmul_transposed(
         backend.kind(),
         right.borrow().dtype,
         TensorOp::Leaf,
-    )?;
+    ).map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
 
     backward_gpu(&left, left_grad, grads, backend)?;
     backward_gpu(&right, right_grad, grads, backend)?;
@@ -3286,6 +3287,8 @@ fn backward(
 
 #[cfg(test)]
 mod ir_tests {
+    use std::collections::HashMap;
+    use super::{backward, index_value, IrRuntime, TensorOp, Value};
     use super::{index_value, IrRuntime, Value};
     use crate::{backend::BackendKind, Tensor};
 

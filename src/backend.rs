@@ -136,40 +136,6 @@ pub(crate) trait TensorBackend {
         Err(BackendError("backend não suporta matmul transposto host".into()))
     }
 
-    fn matmul_transposed(
-        &self,
-        left: &[f32],
-        left_shape: &[usize],
-        right: &[f32],
-        right_shape: &[usize],
-        left_transpose: bool,
-        right_transpose: bool,
-    ) -> Result<Vec<f32>, BackendError> {
-        if left_shape.len() != 2 || right_shape.len() != 2 {
-            return Err(BackendError("matmul transposto CPU requer tensores 2D".into()));
-        }
-        let (ar, ac) = (left_shape[0], left_shape[1]);
-        let (br, bc) = (right_shape[0], right_shape[1]);
-        let (m, k) = if left_transpose { (ac, ar) } else { (ar, ac) };
-        let (k2, n) = if right_transpose { (bc, br) } else { (br, bc) };
-        if k != k2 || left.len() != ar * ac || right.len() != br * bc {
-            return Err(BackendError("matmul transposto CPU recebeu shapes incompatíveis".into()));
-        }
-        let mut out = vec![0.0; m * n];
-        for i in 0..m {
-            for j in 0..n {
-                let mut acc = 0.0;
-                for p in 0..k {
-                    let a_index = if left_transpose { p * ac + i } else { i * ac + p };
-                    let b_index = if right_transpose { j * bc + p } else { p * bc + j };
-                    acc += left[a_index] * right[b_index];
-                }
-                out[i * n + j] = acc;
-            }
-        }
-        Ok(out)
-    }
-
     fn elementwise(
         &self,
         left: &[f32],
@@ -329,6 +295,40 @@ impl TensorBackend for CpuBackend {
                     sum += left[i * k + x] * right[x * n + j];
                 }
                 out[i * n + j] = sum;
+            }
+        }
+        Ok(out)
+    }
+
+    fn matmul_transposed(
+        &self,
+        left: &[f32],
+        left_shape: &[usize],
+        right: &[f32],
+        right_shape: &[usize],
+        left_transpose: bool,
+        right_transpose: bool,
+    ) -> Result<Vec<f32>, BackendError> {
+        if left_shape.len() != 2 || right_shape.len() != 2 {
+            return Err(BackendError("matmul transposto CPU requer tensores 2D".into()));
+        }
+        let (ar, ac) = (left_shape[0], left_shape[1]);
+        let (br, bc) = (right_shape[0], right_shape[1]);
+        let (m, k) = if left_transpose { (ac, ar) } else { (ar, ac) };
+        let (k2, n) = if right_transpose { (bc, br) } else { (br, bc) };
+        if k != k2 || left.len() != ar * ac || right.len() != br * bc {
+            return Err(BackendError("matmul transposto CPU recebeu shapes incompatíveis".into()));
+        }
+        let mut out = vec![0.0; m * n];
+        for i in 0..m {
+            for j in 0..n {
+                let mut acc = 0.0;
+                for p in 0..k {
+                    let a_index = if left_transpose { p * ac + i } else { i * ac + p };
+                    let b_index = if right_transpose { j * bc + p } else { p * bc + j };
+                    acc += left[a_index] * right[b_index];
+                }
+                out[i * n + j] = acc;
             }
         }
         Ok(out)

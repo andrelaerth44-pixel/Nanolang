@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use crate::{ir::{self, DebugSession, DebugStepMode, DebugStop}, Lexer, Parser, Semantic};

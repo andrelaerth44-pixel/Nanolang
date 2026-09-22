@@ -157,6 +157,7 @@ impl Renderer {
             format,
             width,
             height,
+            color_space: wgpu::SurfaceColorSpace::Auto,
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto),
@@ -197,14 +198,14 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
                 module: &shader,
                 entry_point: Some("vs"),
                 compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: 6 * 4,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
                         wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
                     ],
-                }],
+                })],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
@@ -219,7 +220,7 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -241,8 +242,18 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
     }
 
     fn render(&self, clear: [f32; 4], rects: &[Rect], texts: &[TextItem]) -> Result<(), String> {
-        let output = self.surface.get_current_texture()
-            .map_err(|e| format!("Nano UI: surface texture: {e}"))?;
+        let output = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) |
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Outdated |
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                return Err("Nano UI: surface desatualizada; tente novamente".into());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout => return Err("Nano UI: timeout ao adquirir surface".into()),
+            wgpu::CurrentSurfaceTexture::Occluded => return Err("Nano UI: janela oculta".into()),
+            wgpu::CurrentSurfaceTexture::Validation => return Err("Nano UI: erro de validação da surface".into()),
+        };
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let width = self.config.width.max(1) as f32;
@@ -317,6 +328,7 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
                 depth_stencil_attachment: None,
                 occlusion_query_set: None,
                 timestamp_writes: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
             if !vertices.is_empty() {

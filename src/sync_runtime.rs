@@ -128,7 +128,8 @@ pub(crate) fn mutex_new(value: &Value) -> Result<u64, String> {
 pub(crate) fn mutex_get(id: u64) -> Result<Value, String> {
     let cell = registry().lock().map_err(|_| "Nano sync: registry bloqueado".to_string())?
         .values.get(&id).cloned().ok_or_else(|| format!("Nano sync: mutex {id} não existe"))?;
-    Ok(cell.lock().map_err(|_| format!("Nano sync: mutex {id} envenenado"))?.clone().into_value())
+    let value = cell.lock().map_err(|_| format!("Nano sync: mutex {id} envenenado"))?.clone().into_value();
+    Ok(value)
 }
 
 pub(crate) fn mutex_set(id: u64, value: &Value) -> Result<(), String> {

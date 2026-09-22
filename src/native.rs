@@ -258,6 +258,9 @@ impl NativeModule {
                         stack_offset(depth)
                     ));
                 }
+                IrInst::Const(Value::List(_) | Value::Object(_) | Value::Tensor(_)) => {
+                    return Err(format!("Nano native: constante composta/tensor não é suportada diretamente em '{name}'"));
+                }
                 IrInst::Const(Value::Null) => {
                     self.text.push_str(&format!(
                         "    movq $0, {}(%rbp)\n",
