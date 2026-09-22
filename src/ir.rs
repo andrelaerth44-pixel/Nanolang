@@ -600,7 +600,7 @@ impl Compiler {
             }
             Expr::Call(target, args) => {
                 if let Some(name) = qualified_name(target) {
-                    if self.known_functions.contains(&name) || is_builtin_name(&name) {
+                    if self.known_functions.contains(&name) || is_builtin_name(&name) || is_tensor_builtin_name(&name) {
                         for arg in args {
                             self.compile_expr(arg, code)?;
                         }
@@ -3370,6 +3370,25 @@ mod ir_tests {
             ]).unwrap(),
             Value::Number(2.0)
         );
+    }
+
+    #[test]
+    fn tensor_builtins_compile_to_direct_calls() {
+        let source = "a = tensor([1, 2, 3, 4], [2, 2])\nprint shape(a)\n";
+        let tokens = Lexer::new(source).lex().unwrap();
+        let program = Parser::new(tokens).program().unwrap();
+        let mut compiler = Compiler::new();
+        let ir = compiler.compile(&program).unwrap();
+
+        assert!(ir.code.iter().any(|inst| {
+            matches!(inst, IrInst::Call(name, 2) if name == "tensor")
+        }));
+        assert!(ir.code.iter().any(|inst| {
+            matches!(inst, IrInst::Call(name, 1) if name == "shape")
+        }));
+        assert!(!ir.code.iter().any(|inst| {
+            matches!(inst, IrInst::Load(name) if name == "tensor" || name == "shape")
+        }));
     }
 
     #[test]
