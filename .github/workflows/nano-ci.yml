@@ -70,6 +70,12 @@ jobs:
           printf '5\n' > /tmp/nano-function-values.expected
           diff -u /tmp/nano-function-values.expected /tmp/nano-function-values.out
 
+      - name: Main entrypoint
+        run: |
+          cargo run --quiet --bin nano -- run examples/entrypoint.nano > /tmp/nano-entrypoint.out
+          printf 'entrypoint-ok\n' > /tmp/nano-entrypoint.expected
+          diff -u /tmp/nano-entrypoint.expected /tmp/nano-entrypoint.out
+
       - name: Self-host source checks
         run: |
           echo "=== Nano check: selfhost/lexer.nano ==="
