@@ -106,6 +106,29 @@ impl NativeModule {
                     }
                     stack.push(Kind::Number);
                 }
+                IrInst::Unary(op) => {
+                    let value = stack.pop().ok_or_else(|| format!("Nano native: stack insuficiente em '{name}'"))?;
+                    if value != Kind::Number {
+                        return Err(format!("Nano native: operador {:?} exige Number", op));
+                    }
+                    stack.push(Kind::Number);
+                }
+                IrInst::Unary(op) => {
+                    let slot = compile_stack.len() - 1;
+                    self.load_stack(slot, "%xmm0");
+                    match op {
+                        crate::UnaryOp::Neg => {
+                            self.text.push_str("    xorpd %xmm1, %xmm1\n    subsd %xmm0, %xmm1\n    movsd %xmm1, %xmm0\n");
+                        }
+                        crate::UnaryOp::Not => {
+                            let zero = self.add_float(0.0);
+                            self.text.push_str(&format!(
+                                "    ucomisd {zero}(%rip), %xmm0\n    sete %al\n    movzbl %al, %eax\n    cvtsi2sd %eax, %xmm0\n"
+                            ));
+                        }
+                    }
+                    self.text.push_str(&format!("    movsd %xmm0, {}(%rbp)\n", stack_offset(slot)));
+                }
                 IrInst::FusedMulAdd => {
                     for _ in 0..3 {
                         if stack.pop().is_none() {
@@ -226,6 +249,20 @@ impl NativeModule {
                         Op::Sub => self.text.push_str("    subsd %xmm1, %xmm0\n"),
                         Op::Mul => self.text.push_str("    mulsd %xmm1, %xmm0\n"),
                         Op::Div => self.text.push_str("    divsd %xmm1, %xmm0\n"),
+                        Op::Mod => self.text.push_str("    call fmod@PLT\n"),
+                        Op::And | Op::Or => {
+                            let zero = self.add_float(0.0);
+                            self.text.push_str(&format!("    ucomisd {zero}(%rip), %xmm0\n"));
+                            self.text.push_str("    setne %al\n    movzbl %al, %eax\n");
+                            self.text.push_str(&format!("    movsd {zero}(%rip), %xmm0\n    ucomisd {zero}(%rip), %xmm1\n"));
+                            self.text.push_str("    setne %cl\n    movzbl %cl, %ecx\n");
+                            match op {
+                                Op::And => self.text.push_str("    andl %ecx, %eax\n"),
+                                Op::Or => self.text.push_str("    orl %ecx, %eax\n"),
+                                _ => unreachable!(),
+                            }
+                            self.text.push_str("    cvtsi2sd %eax, %xmm0\n");
+                        }
                         Op::Eq | Op::Ne | Op::Gt | Op::Ge | Op::Lt | Op::Le => {
                             self.text.push_str("    xorl %eax, %eax\n    ucomisd %xmm1, %xmm0\n");
                             let set = match op {
