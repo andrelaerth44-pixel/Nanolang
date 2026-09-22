@@ -4,6 +4,7 @@ use std::fmt;
 pub(crate) enum BackendKind {
     Cpu,
     Gpu,
+    Npu,
 }
 
 impl BackendKind {
@@ -11,6 +12,7 @@ impl BackendKind {
         match self {
             Self::Cpu => "cpu",
             Self::Gpu => "gpu",
+            Self::Npu => "npu",
         }
     }
 
@@ -18,6 +20,7 @@ impl BackendKind {
         match value.trim().to_ascii_lowercase().as_str() {
             "cpu" => Ok(Self::Cpu),
             "gpu" => Ok(Self::Gpu),
+            "npu" => Ok(Self::Npu),
             other => Err(BackendError(format!("backend desconhecido: '{other}'"))),
         }
     }
@@ -27,6 +30,7 @@ pub(crate) fn create(kind: BackendKind) -> Result<Box<dyn TensorBackend>, Backen
     match kind {
         BackendKind::Cpu => Ok(Box::new(CpuBackend)),
         BackendKind::Gpu => Ok(Box::new(crate::gpu::GpuBackend::new()?)),
+        BackendKind::Npu => Ok(Box::new(crate::npu::NpuBackend::new()?)),
     }
 }
 
@@ -292,7 +296,7 @@ mod tests {
     fn parses_backend_names() {
         assert_eq!(BackendKind::parse("cpu").unwrap(), BackendKind::Cpu);
         assert_eq!(BackendKind::parse("GPU").unwrap(), BackendKind::Gpu);
-        assert!(BackendKind::parse("npu").is_err());
+        assert_eq!(BackendKind::parse("NPU").unwrap(), BackendKind::Npu);
     }
 
     #[test]
