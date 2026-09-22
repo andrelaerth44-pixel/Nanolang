@@ -341,7 +341,7 @@ impl Runtime {
         match e {
             Expr::Value(v) => Ok(v.clone()),
             Expr::Var(n) => self.vars.get(n).cloned().ok_or_else(|| format!("Nano: variável '{n}' não definida")),
-            Expr::Binary(a, op, b) => self.binary(self.eval(a)?, *op, self.eval(b)?),
+            Expr::Binary(a, op, b) => {\n                let left = self.eval(a)?;\n                let right = self.eval(b)?;\n                self.binary(left, *op, right)\n            },
             Expr::Call(name, args) => {
                 let (params, body) = self.functions.get(name).cloned().ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
                 if params.len() != args.len() { return Err(format!("Nano: '{name}' esperava {} argumentos", params.len())); }
