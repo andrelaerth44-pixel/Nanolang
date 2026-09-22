@@ -278,10 +278,20 @@ impl NativeModule {
                         self.load_stack(arg, &format!("%xmm{reg}"));
                     }
                     self.text.push_str(&format!("    call nano_fn_{}\n", sanitize(callee)));
-                    self.text.push_str(&format!(
-                        "    movsd %xmm0, {}(%rbp)\n",
-                        stack_offset(start)
-                    ));
+                    match function_returns.get(callee).copied().unwrap_or(Kind::Number) {
+                        Kind::Function => self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n",
+                            stack_offset(start)
+                        )),
+                        Kind::Text => self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n",
+                            stack_offset(start)
+                        )),
+                        _ => self.text.push_str(&format!(
+                            "    movsd %xmm0, {}(%rbp)\n",
+                            stack_offset(start)
+                        )),
+                    }
                 }
                 IrInst::CallValue(count) => {
                     let function_slot = depth.checked_sub(*count + 1)
