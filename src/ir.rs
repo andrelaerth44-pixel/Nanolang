@@ -19,6 +19,8 @@ pub(crate) enum IrInst {
     Const(Value),
     Load(String),
     Store(String),
+    SetIndex,
+    SetField(String),
     Binary(Op),
     Unary(crate::UnaryOp),
     FusedMulAdd,
@@ -94,6 +96,8 @@ impl TaskInst {
             IrInst::Const(value) => Self::Const(TaskValue::from_value(value.clone())?),
             IrInst::Load(name) => Self::Load(name.clone()),
             IrInst::Store(name) => Self::Store(name.clone()),
+            IrInst::SetIndex => Self::SetIndex,
+            IrInst::SetField(name) => Self::SetField(name.clone()),
             IrInst::Binary(op) => Self::Binary(*op),
             IrInst::Unary(op) => Self::Unary(*op),
             IrInst::FusedMulAdd => Self::FusedMulAdd,
@@ -118,6 +122,8 @@ impl TaskInst {
             Self::Const(value) => IrInst::Const(value.into_value()),
             Self::Load(name) => IrInst::Load(name),
             Self::Store(name) => IrInst::Store(name),
+            Self::SetIndex => IrInst::SetIndex,
+            Self::SetField(name) => IrInst::SetField(name),
             Self::Binary(op) => IrInst::Binary(op),
             Self::Unary(op) => IrInst::Unary(op),
             Self::FusedMulAdd => IrInst::FusedMulAdd,
@@ -303,6 +309,17 @@ impl Compiler {
             Stmt::Assign(name, expr) => {
                 self.compile_expr(expr, code)?;
                 code.push(IrInst::Store(name.clone()));
+            }
+            Stmt::AssignIndex(target, index, value) => {
+                self.compile_expr(target, code)?;
+                self.compile_expr(index, code)?;
+                self.compile_expr(value, code)?;
+                code.push(IrInst::SetIndex);
+            }
+            Stmt::AssignField(target, name, value) => {
+                self.compile_expr(target, code)?;
+                self.compile_expr(value, code)?;
+                code.push(IrInst::SetField(name.clone()));
             }
             Stmt::Print(expr) => {
                 self.compile_expr(expr, code)?;
