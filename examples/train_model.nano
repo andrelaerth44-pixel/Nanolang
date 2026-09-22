@@ -1,0 +1,19 @@
+# Primeiro loop de treinamento Nano
+
+use "model.nano"
+
+x = tensor([1, 2, 3, 4], [2, 2])
+target = tensor([1, 0, 0, 1], [2, 2])
+w = parameter([0, 1, 1, 0], [2, 2])
+
+for epoch in range(10) {
+    y = forward(x, w)
+    error = y - target
+    loss = mean(error * error)
+
+    g = grad(loss, w)
+    w = adam(w, g, 0.01)
+
+    print epoch
+    print loss
+}
