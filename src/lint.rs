@@ -232,6 +232,15 @@ fn lint_block(stmts: &[Stmt], inside_loop: bool, diagnostics: &mut Vec<Diagnosti
             Stmt::Assign(_, expr) | Stmt::Print(expr) | Stmt::Expr(expr) | Stmt::Return(expr) => {
                 lint_expr(expr, diagnostics);
             }
+            Stmt::AssignIndex(target, index, value) => {
+                lint_expr(target, diagnostics);
+                lint_expr(index, diagnostics);
+                lint_expr(value, diagnostics);
+            }
+            Stmt::AssignField(target, _, value) => {
+                lint_expr(target, diagnostics);
+                lint_expr(value, diagnostics);
+            }
             Stmt::Use(_) => {}
         }
     }
