@@ -135,6 +135,9 @@ jobs:
           test -s /tmp/nano-selfhost.ir
           grep -q "const " /tmp/nano-selfhost.ir
           grep -q "call " /tmp/nano-selfhost.ir
+          grep -q "function add(a, b)" /tmp/nano-selfhost.ir
+          grep -q "end_function" /tmp/nano-selfhost.ir
+          grep -q "jump_if_false" /tmp/nano-selfhost.ir
 
       - name: UI syntax check
         run: cargo run --quiet --bin nano -- check examples/ui.nano
