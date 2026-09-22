@@ -85,6 +85,22 @@ nano run --backend cpu examples/tensor.nano
 
 A seleção de `gpu` entra no runtime Tensor residente; limitações de hardware/capability são reportadas pelo backend.
 
+A CLI também expõe a cadeia de ferramentas principal:
+
+```bash
+nano new meu-projeto
+nano fmt main.nano
+nano lsp
+nano repl
+nano debug main.nano
+nano check main.nano
+nano lint main.nano
+nano test tests
+nano build --native main.nano -o app
+```
+
+`nano fmt` e `nano lsp` encaminham para os binários próprios do formatter e do Language Server, enquanto `nano repl` mantém funções e variáveis entre entradas. `nano debug` mostra o IR compilado de forma determinística para inspeção.
+
 Quando `run` for executado dentro de um projeto sem arquivo explícito, a convenção será procurar automaticamente por `main.nano`.
 
 ## Nano 0.9
