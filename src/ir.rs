@@ -2850,6 +2850,71 @@ fn step_value(parameter: &Value, gradient: &Value, rate: &Value, backend: &dyn T
     Ok(Value::Tensor(param))
 }
 
+fn backward_cpu_matmul_transposed(
+    node: &TensorRef,
+    upstream: Vec<f32>,
+    left: TensorRef,
+    right: TensorRef,
+    left_transpose: bool,
+    right_transpose: bool,
+    grads: &mut HashMap<u64, Vec<f32>>,
+) -> Result<(), String> {
+    let out_shape = node.borrow().shape.clone();
+    if out_shape.len() != 2 {
+        return Err("Nano: grad matmul_transposed requer saída 2D".into());
+    }
+    let (ar, ac, br, bc) = {
+        let l = left.borrow();
+        let r = right.borrow();
+        (l.shape[0], l.shape[1], r.shape[0], r.shape[1])
+    };
+    let (m, k) = if left_transpose { (ac, ar) } else { (ar, ac) };
+    let (k2, n) = if right_transpose { (bc, br) } else { (br, bc) };
+    if k != k2 || out_shape != vec![m, n] || upstream.len() != m * n {
+        return Err("Nano: shapes incompatíveis no grad matmul_transposed".into());
+    }
+
+    let (ldata, rdata) = {
+        let l = left.borrow();
+        let r = right.borrow();
+        (l.data_f32(), r.data_f32())
+    };
+
+    let a_log = |row: usize, col: usize| -> f32 {
+        if left_transpose { ldata[col * ac + row] } else { ldata[row * ac + col] }
+    };
+    let b_log = |row: usize, col: usize| -> f32 {
+        if right_transpose { rdata[col * bc + row] } else { rdata[row * bc + col] }
+    };
+
+    let mut left_grad = vec![0.0f32; ar * ac];
+    for i in 0..ar {
+        for j in 0..ac {
+            let (lr, lc) = if left_transpose { (j, i) } else { (i, j) };
+            let mut sum = 0.0;
+            for q in 0..n {
+                sum += upstream[lr * n + q] * b_log(lc, q);
+            }
+            left_grad[i * ac + j] = sum;
+        }
+    }
+
+    let mut right_grad = vec![0.0f32; br * bc];
+    for i in 0..br {
+        for j in 0..bc {
+            let (lr, lc) = if right_transpose { (j, i) } else { (i, j) };
+            let mut sum = 0.0;
+            for p in 0..m {
+                sum += a_log(p, lr) * upstream[p * n + lc];
+            }
+            right_grad[i * bc + j] = sum;
+        }
+    }
+
+    backward(&left, left_grad, grads)?;
+    backward(&right, right_grad, grads)
+}
+
 fn backward(
     node: &TensorRef,
     upstream: Vec<f32>,
@@ -2963,6 +3028,17 @@ fn backward(
             backward(&left, lg, grads)?;
             backward(&right, rg, grads)?;
             Ok(())
+        }
+        TensorOp::MatmulTransposed(left, right, left_transpose, right_transpose) => {
+            backward_cpu_matmul_transposed(
+                node,
+                upstream,
+                left,
+                right,
+                left_transpose,
+                right_transpose,
+                grads,
+            )
         }
     }
 }
