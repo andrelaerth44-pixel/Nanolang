@@ -473,7 +473,7 @@ function emit_c(ir_text, runtime_text) {
     return {ok: true, c: join(out, "\n")}
 }
 
-function main() {
+function c_backend_main() {
     ir_path = std.env.get("NANO_SELFHOST_IR")
     runtime_path = std.env.get("NANO_SELFHOST_RUNTIME")
     output_path = std.env.get("NANO_SELFHOST_C")
