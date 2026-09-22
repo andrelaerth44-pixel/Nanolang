@@ -1614,7 +1614,7 @@ fn parse_cli(
     }
     if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New | CliCommand::Fmt | CliCommand::Lsp | CliCommand::Repl | CliCommand::Debug)
         && (native_requested || selected_backend.is_some() || selected_dtype.is_some() || output.is_some()) {
-        return Err("Nano: opções de execução/build não são válidas com 'package'".into());
+        return Err("Nano: opções não são válidas para este comando".into());
     }
 
     if matches!(command, CliCommand::BuildNative) && output.is_none() {
@@ -1674,7 +1674,7 @@ fn scan_repl_braces(source: &str) -> isize {
             if in_string {
                 if escape {
                     escape = false;
-                } else if ch == '\' {
+                } else if ch == '\\' {
                     escape = true;
                 } else if ch == '"' {
                     in_string = false;
@@ -1820,8 +1820,7 @@ fn print_debug_ir(program: &ir::IrProgram) {
         println!("{index:04}  {inst:?}");
     }
     for (name, function) in &program.functions {
-        println!("
-=== function {name}({}) ===", function.params.join(", "));
+        println!("\n=== function {name}({}) ===", function.params.join(", "));
         for (index, inst) in function.code.iter().enumerate() {
             println!("{index:04}  {inst:?}");
         }
