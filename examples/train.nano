@@ -1,0 +1,15 @@
+# Nano 0.6 — primeiro passo de treino
+
+x = tensor([1, 2, 3, 4], [2, 2])
+w = parameter([1, 0, 0, 1], [2, 2])
+
+y = matmul(x, w)
+loss = mean(y)
+
+g = grad(loss, w)
+
+print shape(y)
+print shape(g)
+
+w = step(w, g, 0.01)
+print shape(w)
