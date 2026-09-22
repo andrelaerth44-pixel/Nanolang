@@ -97,6 +97,10 @@ function emit_stmt(stmt, counter) {
         return {lines: append(lines, "return"), next: counter}
     }
 
+    if stmt.kind == "break" {
+        return {lines: append(lines, "break"), next: counter}
+    }
+
     if stmt.kind == "use" {
         return {lines: append(lines, "use " + stmt.path), next: counter}
     }
