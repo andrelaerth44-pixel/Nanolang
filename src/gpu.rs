@@ -179,6 +179,38 @@ impl GpuBackend {
         Ok(buffer)
     }
 
+    fn encode_resident_dispatch(
+        &self,
+        pipeline:&wgpu::ComputePipeline,
+        inputs:&[&wgpu::Buffer],
+        uniform:&wgpu::Buffer,
+        groups:(u32,u32,u32),
+        output:&wgpu::Buffer,
+    ) -> wgpu::CommandBuffer {
+        let mut entries=Vec::with_capacity(inputs.len()+2);
+        for(i,buffer)in inputs.iter().enumerate(){entries.push(wgpu::BindGroupEntry{binding:i as u32,resource:buffer.as_entire_binding()});}
+        entries.push(wgpu::BindGroupEntry{binding:inputs.len() as u32,resource:output.as_entire_binding()});
+        entries.push(wgpu::BindGroupEntry{binding:(inputs.len()+1) as u32,resource:uniform.as_entire_binding()});
+        let bind_group=self.device.create_bind_group(&wgpu::BindGroupDescriptor{
+            label:Some("nano-gpu-resident-bind-group"),
+            layout:&pipeline.get_bind_group_layout(0),
+            entries:&entries
+        });
+        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("nano-gpu-resident-command")});
+        {
+            let mut pass=encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("nano-gpu-resident-compute"),timestamp_writes:None});
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0,&bind_group,&[]);
+            pass.dispatch_workgroups(groups.0,groups.1,groups.2);
+        }
+        encoder.finish()
+    }
+
+    fn dispatch_resident(&self,pipeline:&wgpu::ComputePipeline,inputs:&[&wgpu::Buffer],uniform:&wgpu::Buffer,groups:(u32,u32,u32),output:&wgpu::Buffer){
+        let command=self.encode_resident_dispatch(pipeline,inputs,uniform,groups,output);
+        self.queue.submit(Some(command));
+    }
+
     fn dispatch_into(&self,pipeline:&wgpu::ComputePipeline,inputs:&[&wgpu::Buffer],uniform:&wgpu::Buffer,groups:(u32,u32,u32),output:&wgpu::Buffer,output_len:usize)->Result<Vec<f32>,BackendError>{
         if output_len==0{return Ok(Vec::new());}
         let output_bytes=self.planner.borrow().bytes_for(output_len,DType::F32);
@@ -186,17 +218,10 @@ impl GpuBackend {
             label:Some("nano-gpu-readback"),size:output_bytes as u64,
             usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false,
         });
-        let mut entries=Vec::with_capacity(inputs.len()+2);
-        for(i,buffer)in inputs.iter().enumerate(){entries.push(wgpu::BindGroupEntry{binding:i as u32,resource:buffer.as_entire_binding()});}
-        entries.push(wgpu::BindGroupEntry{binding:inputs.len() as u32,resource:output.as_entire_binding()});
-        entries.push(wgpu::BindGroupEntry{binding:(inputs.len()+1) as u32,resource:uniform.as_entire_binding()});
-        let bind_group=self.device.create_bind_group(&wgpu::BindGroupDescriptor{label:Some("nano-gpu-resident-bind-group"),layout:&pipeline.get_bind_group_layout(0),entries:&entries});
-        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("nano-gpu-resident-command")});
-        {
-            let mut pass=encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("nano-gpu-resident-compute"),timestamp_writes:None});
-            pass.set_pipeline(pipeline);pass.set_bind_group(0,&bind_group,&[]);pass.dispatch_workgroups(groups.0,groups.1,groups.2);
-        }
+        let command=self.encode_resident_dispatch(pipeline,inputs,uniform,groups,output);
+        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("nano-gpu-readback-command")});
         encoder.copy_buffer_to_buffer(output,0,&readback,0,(output_len*4) as u64);
+        self.queue.submit(Some(command));
         self.queue.submit(Some(encoder.finish()));
         self.readback(&readback,output_len)
     }
@@ -288,6 +313,18 @@ impl TensorBackend for GpuBackend {
         self.dispatch(&self.matmul,&[&a,&b],&params,(((n as u32)+7)/8,((m as u32)+7)/8,1),m*n)
     }
 
+    fn matmul_resident_async(&self,left_id:u64,left_shape:&[usize],right_id:u64,right_shape:&[usize],output_id:u64)->Result<(),BackendError>{
+        if left_shape.len()!=2||right_shape.len()!=2{return Err(BackendError("matmul GPU requer tensores 2D".into()));}
+        let(m,k)=(left_shape[0],left_shape[1]);let(k2,n)=(right_shape[0],right_shape[1]);
+        if k!=k2{return Err(BackendError("matmul GPU recebeu shapes incompatíveis".into()));}
+        let a=self.resident.borrow().get(&left_id).ok_or_else(||BackendError("tensor esquerdo não está residente na GPU".into()))?.buffer.clone();
+        let b=self.resident.borrow().get(&right_id).ok_or_else(||BackendError("tensor direito não está residente na GPU".into()))?.buffer.clone();
+        let out=self.resident_buffer(output_id,m*n)?;
+        let params=self.create_buffer(&Self::bytes_u32(&[m as u32,k as u32,n as u32,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident(&self.matmul,&[&a,&b],&params,(((n as u32)+7)/8,((m as u32)+7)/8,1),&out);
+        Ok(())
+    }
+
     fn matmul_resident(&self,left_id:u64,left:&[f32],left_shape:&[usize],right_id:u64,right:&[f32],right_shape:&[usize],output_id:u64)->Result<Vec<f32>,BackendError>{
         if left_shape.len()!=2||right_shape.len()!=2{return Err(BackendError("matmul GPU requer tensores 2D".into()));}
         let(m,k)=(left_shape[0],left_shape[1]);let(k2,n)=(right_shape[0],right_shape[1]);
@@ -305,6 +342,17 @@ impl TensorBackend for GpuBackend {
         let code=match op{ElementwiseOp::Add=>0,ElementwiseOp::Sub=>1,ElementwiseOp::Mul=>2,ElementwiseOp::Div=>3};
         let params=self.create_buffer(&Self::bytes_u32(&[left.len() as u32,code,0,0]),wgpu::BufferUsages::UNIFORM);
         self.dispatch(&self.elementwise,&[&a,&b],&params,(((left.len() as u32)+255)/256,1,1),left.len())
+    }
+
+    fn elementwise_resident_async(&self,left_id:u64,right_id:u64,shape:&[usize],op:ElementwiseOp,output_id:u64)->Result<(),BackendError>{
+        let expected=shape.iter().copied().product::<usize>();
+        let a=self.resident.borrow().get(&left_id).ok_or_else(||BackendError("tensor esquerdo não está residente na GPU".into()))?.buffer.clone();
+        let b=self.resident.borrow().get(&right_id).ok_or_else(||BackendError("tensor direito não está residente na GPU".into()))?.buffer.clone();
+        let out=self.resident_buffer(output_id,expected)?;
+        let code=match op{ElementwiseOp::Add=>0,ElementwiseOp::Sub=>1,ElementwiseOp::Mul=>2,ElementwiseOp::Div=>3};
+        let params=self.create_buffer(&Self::bytes_u32(&[expected as u32,code,0,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident(&self.elementwise,&[&a,&b],&params,(((expected as u32)+255)/256,1,1),&out);
+        Ok(())
     }
 
     fn elementwise_resident(&self,left_id:u64,left:&[f32],right_id:u64,right:&[f32],shape:&[usize],op:ElementwiseOp,output_id:u64)->Result<Vec<f32>,BackendError>{
@@ -345,6 +393,17 @@ impl TensorBackend for GpuBackend {
         )
     }
 
+    fn fused_mul_add_resident_async(&self,left_id:u64,right_id:u64,bias_id:u64,shape:&[usize],output_id:u64)->Result<(),BackendError>{
+        let expected=shape.iter().copied().product::<usize>();
+        let a=self.resident.borrow().get(&left_id).ok_or_else(||BackendError("tensor esquerdo não está residente na GPU".into()))?.buffer.clone();
+        let b=self.resident.borrow().get(&right_id).ok_or_else(||BackendError("tensor direito não está residente na GPU".into()))?.buffer.clone();
+        let c=self.resident.borrow().get(&bias_id).ok_or_else(||BackendError("bias não está residente na GPU".into()))?.buffer.clone();
+        let out=self.resident_buffer(output_id,expected)?;
+        let params=self.create_buffer(&Self::bytes_u32(&[expected as u32,0,0,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident(&self.fma,&[&a,&b,&c],&params,(((expected as u32)+255)/256,1,1),&out);
+        Ok(())
+    }
+
     fn fused_mul_add_resident(&self,left_id:u64,left:&[f32],right_id:u64,right:&[f32],bias_id:u64,bias:&[f32],shape:&[usize],output_id:u64)->Result<Vec<f32>,BackendError>{
         let expected=shape.iter().copied().product::<usize>();
         if left.len()!=expected||right.len()!=expected||bias.len()!=expected{return Err(BackendError("fused_mul_add GPU recebeu buffers incompatíveis".into()));}
@@ -363,6 +422,27 @@ impl TensorBackend for GpuBackend {
     fn release_tensor(&self,id:u64)->Result<(),BackendError>{
         if let Some(entry)=self.resident.borrow_mut().remove(&id){self.planner.borrow_mut().release(entry.block);}
         Ok(())
+    }
+
+    fn reduce_resident_async(&self,input_id:u64,elements:usize,_mean:bool,output_id:u64)->Result<(),BackendError>{
+        let input=self.resident.borrow().get(&input_id).ok_or_else(||BackendError("tensor de redução não está residente na GPU".into()))?.buffer.clone();
+        let output=self.resident_buffer(output_id,1)?;
+        let params=self.create_buffer(&Self::bytes_u32(&[elements as u32,0,0,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident(&self.reduce,&[&input],&params,(1,1,1),&output);
+        Ok(())
+    }
+
+    fn read_tensor(&self,id:u64,elements:usize)->Result<Vec<f32>,BackendError>{
+        let buffer=self.resident.borrow().get(&id).ok_or_else(||BackendError("tensor não está residente na GPU".into()))?.buffer.clone();
+        let bytes=self.planner.borrow().bytes_for(elements,DType::F32);
+        let staging=self.device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("nano-gpu-explicit-readback"),size:bytes as u64,
+            usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false,
+        });
+        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("nano-gpu-explicit-readback-command")});
+        encoder.copy_buffer_to_buffer(&buffer,0,&staging,0,(elements*4) as u64);
+        self.queue.submit(Some(encoder.finish()));
+        self.readback(&staging,elements)
     }
 
     fn reduce(&self,data:&[f32],mean:bool)->Result<f32,BackendError>{
