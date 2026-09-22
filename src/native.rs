@@ -14,6 +14,7 @@ enum Kind {
     Boolean,
     Text,
     Function,
+    Null,
 }
 
 pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
@@ -312,13 +313,13 @@ impl NativeModule {
                             stack_offset(left),
                             temp_left,
                             stack_offset(right),
-                            temp_offset(250),
+                            temp_left,
                             temp_result,
-                            temp_offset(251),
+                            temp_result,
                             stack_offset(left),
-                            temp_offset(251),
+                            temp_result,
                             stack_offset(right),
-                            temp_offset(251),
+                            temp_result,
                             stack_offset(left)
                         ));
                     } else if matches!(*op, Op::Eq | Op::Ne)
