@@ -1,4 +1,4 @@
-# Nano 0.6 — Especificação inicial
+# Nano 0.7 — Especificação inicial
 
 ## 1. Arquivos
 
@@ -83,6 +83,34 @@ if age >= 18 {
     print "menor"
 }
 ```
+
+### Loops
+
+Loop condicional:
+
+```nano
+while age < 30 {
+    age = age + 1
+}
+```
+
+Loop de coleção:
+
+```nano
+for item in numbers {
+    print item
+}
+```
+
+Contagem simples:
+
+```nano
+for epoch in range(10) {
+    print epoch
+}
+```
+
+Nano mantém apenas duas formas principais de repetição: `while` e `for ... in ...`.
 
 ### Funções
 
@@ -360,4 +388,53 @@ Nano IR Runtime
 O compilador em `src/ir.rs` transforma a AST em instruções intermediárias como `Const`, `Load`, `Store`, `Binary`, `Call`, `Jump`, `JumpIfFalse`, `Return`, `Index`, `Field` e `Print`.
 
 A VM Nano executa esse IR diretamente. A sintaxe da linguagem continua independente do backend.
+
+
+
+## 9. Módulos de modelo
+
+Um modelo pode ser separado em um módulo Nano comum.
+
+```nano
+# model.nano
+function forward(x, w) {
+    return matmul(x, w)
+}
+```
+
+E usado pelo programa:
+
+```nano
+# train.nano
+use "model.nano"
+
+y = forward(x, w)
+```
+
+Não existe uma palavra-chave obrigatória como `model`. O módulo de modelo usa as mesmas funções, Tensor e módulos da linguagem.
+
+## 10. Otimizadores
+
+Nano 0.7 possui dois caminhos de atualização:
+
+```nano
+w = step(w, grad(loss, w), 0.001)
+w = adam(w, grad(loss, w), 0.001)
+```
+
+`step()` executa SGD simples.
+
+`adam()` mantém o estado do otimizador por parâmetro e usa atualização Adam com momentos e correção de viés.
+
+As atualizações atuais são feitas **in-place** no armazenamento do Tensor para evitar criar um novo buffer do parâmetro a cada passo.
+
+## 11. Memória
+
+Tensor usa armazenamento contíguo `f32` e referências compartilhadas para o grafo de autograd.
+
+Operações derivadas mantêm referências aos tensores de entrada em vez de copiar seus buffers inteiros.
+
+`matmul()` também evita copiar os buffers de entrada para realizar o cálculo.
+
+Isso é uma otimização inicial de memória. Para modelos muito grandes ainda serão necessárias alocação por arena, planejamento de memória, tipos de precisão menores, checkpointing e offload.
 
