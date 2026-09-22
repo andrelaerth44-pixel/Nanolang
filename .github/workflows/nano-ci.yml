@@ -63,6 +63,13 @@ jobs:
           diff -u /tmp/nano-native.expected /tmp/nano-native.out
           test "$native_status" -eq 0
 
+      - name: Native first-class function values
+        run: |
+          cargo run --quiet --bin nano -- build --native examples/function_values.nano -o /tmp/nano-function-values
+          /tmp/nano-function-values > /tmp/nano-function-values.out
+          printf '5\n' > /tmp/nano-function-values.expected
+          diff -u /tmp/nano-function-values.expected /tmp/nano-function-values.out
+
       - name: Self-host source checks
         run: |
           echo "=== Nano check: selfhost/lexer.nano ==="
