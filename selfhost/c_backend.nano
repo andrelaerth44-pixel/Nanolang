@@ -322,11 +322,11 @@ function parse_functions(lines) {
     return functions
 }
 
-function emit_function(function) {
+function emit_function(fn_item) {
     code = function.code
     labels = label_targets(code)
     lines = [
-        "static NanoValue *nano_fn_" + symbol(function.name) + "(NanoValue **args, int argc) {",
+        "static NanoValue *nano_fn_" + symbol(fn_item.name) + "(NanoValue **args, int argc) {",
         "    NanoEnv env = {0};",
         "    NanoValue *stack[1024];",
         "    int sp = 0;",
@@ -336,8 +336,8 @@ function emit_function(function) {
     ]
 
     i = 0
-    while i < len(function.params) {
-        lines = append(lines, "    if (argc > " + to_text(i) + ") nano_env_set(&env, \"" + escape_c(function.params[i]) + "\", args[" + to_text(i) + "]);")
+    while i < len(fn_item.params) {
+        lines = append(lines, "    if (argc > " + to_text(i) + ") nano_env_set(&env, \"" + escape_c(fn_item.params[i]) + "\", args[" + to_text(i) + "]);")
         i = i + 1
     }
 
@@ -372,8 +372,8 @@ function emit_dispatch(functions) {
     lines = [
         "static NanoValue *nano_call_dynamic(const char *name, NanoValue **args, int argc) {"
     ]
-    for function in functions {
-        lines = append(lines, "    if (strcmp(name, \"" + escape_c(function.name) + "\") == 0) return nano_fn_" + symbol(function.name) + "(args, argc);")
+    for fn_item in functions {
+        lines = append(lines, "    if (strcmp(name, \"" + escape_c(fn_item.name) + "\") == 0) return nano_fn_" + symbol(fn_item.name) + "(args, argc);")
     }
     lines = append(lines, "    return nano_call_builtin(name, args, argc);")
     lines = append(lines, "}")
@@ -441,8 +441,8 @@ function emit_c(ir_text, runtime_text) {
         ""
     ]
 
-    for function in functions {
-        lines = append(lines, "static NanoValue *nano_fn_" + symbol(function.name) + "(NanoValue **args, int argc);")
+    for fn_item in functions {
+        lines = append(lines, "static NanoValue *nano_fn_" + symbol(fn_item.name) + "(NanoValue **args, int argc);")
     }
     for line in lines {
         out = append(out, line)
@@ -458,8 +458,8 @@ function emit_c(ir_text, runtime_text) {
         out = append(out, line)
     }
 
-    for function in functions {
-        generated = emit_function(function)
+    for fn_item in functions {
+        generated = emit_function(fn_item)
         for line in generated {
             out = append(out, line)
         }
