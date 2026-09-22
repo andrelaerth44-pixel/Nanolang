@@ -26,7 +26,7 @@ impl BackendKind {
 pub(crate) fn create(kind: BackendKind) -> Result<Box<dyn TensorBackend>, BackendError> {
     match kind {
         BackendKind::Cpu => Ok(Box::new(CpuBackend)),
-        BackendKind::Gpu => Err(BackendError("backend GPU ainda não está implementado".into())),
+        BackendKind::Gpu => Ok(Box::new(crate::gpu::GpuBackend::new()?)),
     }
 }
 
@@ -59,6 +59,7 @@ pub(crate) trait TensorBackend {
     ) -> Result<Vec<f32>, BackendError>;
 
     fn reduce(&self, data: &[f32], mean: bool) -> Result<f32, BackendError>;
+    fn transfer(&self, data: &[f32]) -> Result<Vec<f32>, BackendError>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -139,6 +140,10 @@ impl TensorBackend for CpuBackend {
         }
         let sum = data.iter().copied().sum::<f32>();
         Ok(if mean { sum / data.len() as f32 } else { sum })
+    }
+
+    fn transfer(&self, data: &[f32]) -> Result<Vec<f32>, BackendError> {
+        Ok(data.to_vec())
     }
 }
 

@@ -9,3 +9,6 @@ name = "nano"
 path = "src/main.rs"
 
 [dependencies]
+half = "2.7.1"
+pollster = "1.0.1"
+wgpu = "30.0.1"
