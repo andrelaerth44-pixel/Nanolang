@@ -628,7 +628,6 @@ fn analyze_stack(
             | IrInst::Field(_)
             | IrInst::SetIndex
             | IrInst::SetField(_)
-            | IrInst::CallValue(_)
             | IrInst::IterInit
             | IrInst::IterNext(_, _)
             | IrInst::Use(_) => {
