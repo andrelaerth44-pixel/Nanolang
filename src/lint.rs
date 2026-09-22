@@ -80,6 +80,15 @@ fn collect_calls_stmt(stmt: &Stmt, calls: &mut HashSet<String>) {
         | Stmt::Print(expr)
         | Stmt::Expr(expr)
         | Stmt::Return(expr) => collect_calls_expr(expr, calls),
+        Stmt::AssignIndex(target, index, value) => {
+            collect_calls_expr(target, calls);
+            collect_calls_expr(index, calls);
+            collect_calls_expr(value, calls);
+        }
+        Stmt::AssignField(target, _, value) => {
+            collect_calls_expr(target, calls);
+            collect_calls_expr(value, calls);
+        }
         Stmt::If(cond, yes, no) => {
             collect_calls_expr(cond, calls);
             for child in yes.iter().chain(no.iter()) {
@@ -295,6 +304,15 @@ fn used_stmt(stmt: &Stmt, used: &mut HashSet<String>) {
         | Stmt::Print(expr)
         | Stmt::Expr(expr)
         | Stmt::Return(expr) => used_expr(expr, used),
+        Stmt::AssignIndex(target, index, value) => {
+            used_expr(target, used);
+            used_expr(index, used);
+            used_expr(value, used);
+        }
+        Stmt::AssignField(target, _, value) => {
+            used_expr(target, used);
+            used_expr(value, used);
+        }
         Stmt::If(cond, yes, no) => {
             used_expr(cond, used);
             for child in yes.iter().chain(no.iter()) { used_stmt(child, used); }
