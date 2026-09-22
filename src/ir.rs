@@ -963,7 +963,7 @@ impl IrRuntime {
             };
             fn is_sendable(value: &Value) -> bool {
                 match value {
-                    Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Null => true,
+                    Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Function(_) | Value::Null => true,
                     Value::List(items) => items.iter().all(is_sendable),
                     Value::Object(items) => items.values().all(is_sendable),
                     Value::Tensor(_) => false,
@@ -1325,14 +1325,14 @@ impl IrRuntime {
                 Value::Object(object) => object,
                 _ => return Err("Nano: unwrap() requer Result".into()),
             };
-            match object.get("ok") {
+            return match object.get("ok") {
                 Some(Value::Boolean(true)) => object.get("value").cloned().ok_or_else(|| "Nano: Result ok sem value".into()),
                 Some(Value::Boolean(false)) => {
                     let message = object.get("error").map(Value::show).unwrap_or_else(|| "erro Nano desconhecido".into());
                     Err(format!("Nano: unwrap(): {message}"))
                 }
                 _ => Err("Nano: objeto não é um Result válido".into()),
-            }
+            };
         }
 
         if name == "error" {
