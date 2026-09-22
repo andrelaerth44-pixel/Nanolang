@@ -13,7 +13,8 @@ fn main() {
 
         let op = request.get("op").and_then(|v| v.as_str()).unwrap_or("");
         let response = match op {
-            "handshake" => serde_json::json!({"ok": true, "abi": 1, "provider": "nano-reference-npu"}),
+            "handshake" => serde_json::json!({"ok": true, "abi": 1, "provider": "nano-reference-npu",
+                "ops": ["matmul","elementwise","fused_mul_add","reduce","upload","read","release","transfer"]}),
             "transfer" => {
                 let data = floats(&request["data"]);
                 serde_json::json!({"ok": true, "data": data})
