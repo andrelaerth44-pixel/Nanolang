@@ -1096,12 +1096,13 @@ impl IrRuntime {
         if name == "https_get" {
             if args.len() != 1 { return Err("Nano: https_get() recebe URL".into()); }
             let url = text_arg(&args[0], "URL")?;
-            let output = Command::new("curl").args(["-fsSL", &url]).output()
-                .map_err(|e| format!("Nano HTTPS: curl indisponível: {e}"))?;
-            if !output.status.success() {
-                return Err(format!("Nano HTTPS: curl terminou com código {:?}", output.status.code()));
-            }
-            return Ok(Value::Text(String::from_utf8_lossy(&output.stdout).into_owned()));
+            let rest = url.strip_prefix("https://")
+                .ok_or_else(|| "Nano HTTPS: a URL deve começar por https://".to_string())?;
+            let (authority, path) = rest.split_once('/').unwrap_or((rest, "/"));
+            let (host, port) = authority.rsplit_once(':')
+                .and_then(|(host, port)| port.parse::<u16>().ok().map(|port| (host, port)))
+                .unwrap_or((authority, 443));
+            return Ok(Value::Text(crate::tls::https_get(host, port, &format!("/{path}"))?));
         }
 
         if name == "sync_mutex_new" {
