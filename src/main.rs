@@ -731,6 +731,18 @@ impl Semantic {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
                     return Ok(Type::Number);
                 }
+                if name == "backend" {
+                    if !args.is_empty() { return Err("Nano: backend() não recebe argumentos".into()); }
+                    return Ok(Type::Text);
+                }
+                if name == "device" {
+                    if args.len() != 1 { return Err("Nano: device() recebe 1 tensor".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Tensor && ty != Type::Any {
+                        return Err(format!("Nano: device() requer Tensor, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Text);
+                }
                 if name == "tensor" {
                     if args.len() != 2 { return Err("Nano: tensor() recebe dados e shape".into()); }
                     let data_type = self.expr_type(&args[0])?;
