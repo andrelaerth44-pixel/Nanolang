@@ -1055,9 +1055,9 @@ impl Semantic {
                     "std.async.close_channel" => "close_channel",
                     other => other,
                 };
-                if matches!(name.as_str(), "ok" | "err" | "is_ok" | "unwrap" | "error") {
+                if matches!(name, "ok" | "err" | "is_ok" | "unwrap" | "error") {
                     if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 argumento")); }
-                    return Ok(match name.as_str() {
+                    return Ok(match name {
                         "ok" | "err" => Type::Object,
                         "is_ok" => Type::Boolean,
                         "error" => Type::Text,
