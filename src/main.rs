@@ -913,6 +913,24 @@ impl Semantic {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
                     return Ok(Type::Number);
                 }
+                if matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "sin" | "cos" | "tan" | "exp" | "log") {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Number")); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Number && ty != Type::Any {
+                        return Err(format!("Nano: {name}() requer Number, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Number);
+                }
+                if name == "pow" || name == "min" || name == "max" {
+                    if args.len() != 2 { return Err(format!("Nano: {name}() recebe 2 Numbers")); }
+                    for arg in args {
+                        let ty = self.expr_type(arg)?;
+                        if ty != Type::Number && ty != Type::Any {
+                            return Err(format!("Nano: {name}() requer Numbers"));
+                        }
+                    }
+                    return Ok(Type::Number);
+                }
                 if name == "to_text" {
                     if args.len() != 1 { return Err("Nano: to_text() recebe 1 argumento".into()); }
                     return Ok(Type::Text);
