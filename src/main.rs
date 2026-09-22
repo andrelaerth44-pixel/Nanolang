@@ -7,7 +7,7 @@ enum Token {
     True, False, Function, Print, If, Else, Return,
     Plus, Minus, Star, Slash, Equal, EqualEqual, BangEqual,
     Greater, GreaterEqual, Less, LessEqual,
-    LeftParen, RightParen, LeftBrace, RightBrace, Comma, Eof,
+    LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Comma, Colon, Dot, Eof,
 }
 
 struct Lexer { src: Vec<char>, pos: usize }
@@ -37,7 +37,11 @@ impl Lexer {
                 ')' => { self.advance(); out.push(Token::RightParen); }
                 '{' => { self.advance(); out.push(Token::LeftBrace); }
                 '}' => { self.advance(); out.push(Token::RightBrace); }
+                '[' => { self.advance(); out.push(Token::LeftBracket); }
+                ']' => { self.advance(); out.push(Token::RightBracket); }
                 ',' => { self.advance(); out.push(Token::Comma); }
+                ':' => { self.advance(); out.push(Token::Colon); }
+                '.' => { self.advance(); out.push(Token::Dot); }
                 '=' => {
                     self.advance();
                     if self.peek() == Some('=') { self.advance(); out.push(Token::EqualEqual); }
@@ -112,6 +116,8 @@ impl Value {
             Self::Boolean(v) => *v,
             Self::Number(v) => *v != 0.0,
             Self::Text(v) => !v.is_empty(),
+            Self::List(v) => !v.is_empty(),
+            Self::Object(v) => !v.is_empty(),
             Self::Null => false,
         }
     }
@@ -121,6 +127,12 @@ impl Value {
             Self::Number(v) => v.to_string(),
             Self::Text(v) => v.clone(),
             Self::Boolean(v) => v.to_string(),
+            Self::List(v) => format!("[{}]", v.iter().map(|x| x.show()).collect::<Vec<_>>().join(", ")),
+            Self::Object(v) => {
+                let mut items = v.iter().map(|(k, val)| format!("{}: {}", k, val.show())).collect::<Vec<_>>();
+                items.sort();
+                format!("{{{}}}", items.join(", "))
+            }
             Self::Null => "null".into(),
         }
     }
@@ -128,8 +140,9 @@ impl Value {
 
 #[derive(Debug, Clone)]
 enum Expr {
-    Value(Value), Var(String), Binary(Box<Expr>, Op, Box<Expr>),
-    Call(String, Vec<Expr>),
+    Value(Value), Var(String), List(Vec<Expr>), Object(Vec<(String, Expr)>),
+    Binary(Box<Expr>, Op, Box<Expr>), Call(String, Vec<Expr>),
+    Index(Box<Expr>, Box<Expr>), Field(Box<Expr>, String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -259,14 +272,58 @@ impl Parser {
         Ok(left)
     }
     fn primary(&mut self) -> Result<Expr, String> {
-        match self.advance() {
-            Token::Number(v) => Ok(Expr::Value(Value::Number(v))),
-            Token::Text(v) => Ok(Expr::Value(Value::Text(v))),
-            Token::True => Ok(Expr::Value(Value::Boolean(true))),
-            Token::False => Ok(Expr::Value(Value::Boolean(false))),
-            Token::Ident(name) => {
-                if matches!(self.peek(), Token::LeftParen) {
+        let mut expr = match self.advance() {
+            Token::Number(v) => Expr::Value(Value::Number(v)),
+            Token::Text(v) => Expr::Value(Value::Text(v)),
+            Token::True => Expr::Value(Value::Boolean(true)),
+            Token::False => Expr::Value(Value::Boolean(false)),
+            Token::Ident(name) => Expr::Var(name),
+            Token::LeftParen => {
+                let e = self.expression()?;
+                self.expect(Token::RightParen)?;
+                e
+            }
+            Token::LeftBracket => {
+                let mut items = Vec::new();
+                if !matches!(self.peek(), Token::RightBracket) {
+                    loop {
+                        items.push(self.expression()?);
+                        if matches!(self.peek(), Token::RightBracket) { break; }
+                        self.expect(Token::Comma)?;
+                    }
+                }
+                self.expect(Token::RightBracket)?;
+                Expr::List(items)
+            }
+            Token::LeftBrace => {
+                let mut fields = Vec::new();
+                if !matches!(self.peek(), Token::RightBrace) {
+                    loop {
+                        let key = match self.advance() {
+                            Token::Ident(v) => v,
+                            Token::Text(v) => v,
+                            x => return Err(format!("Nano: chave esperada no objeto, encontrado {:?}", x)),
+                        };
+                        self.expect(Token::Colon)?;
+                        fields.push((key, self.expression()?));
+                        if matches!(self.peek(), Token::RightBrace) { break; }
+                        self.expect(Token::Comma)?;
+                    }
+                }
+                self.expect(Token::RightBrace)?;
+                Expr::Object(fields)
+            }
+            x => return Err(format!("Nano: expressão inesperada {:?}", x)),
+        };
+
+        loop {
+            match self.peek() {
+                Token::LeftParen => {
                     self.advance();
+                    let name = match expr {
+                        Expr::Var(n) => n,
+                        _ => return Err("Nano: chamada deve usar o nome de uma função na v0.2".into()),
+                    };
                     let mut args = Vec::new();
                     if !matches!(self.peek(), Token::RightParen) {
                         loop {
@@ -276,16 +333,26 @@ impl Parser {
                         }
                     }
                     self.expect(Token::RightParen)?;
-                    Ok(Expr::Call(name, args))
-                } else { Ok(Expr::Var(name)) }
+                    expr = Expr::Call(name, args);
+                }
+                Token::LeftBracket => {
+                    self.advance();
+                    let index = self.expression()?;
+                    self.expect(Token::RightBracket)?;
+                    expr = Expr::Index(Box::new(expr), Box::new(index));
+                }
+                Token::Dot => {
+                    self.advance();
+                    let name = match self.advance() {
+                        Token::Ident(v) => v,
+                        x => return Err(format!("Nano: campo esperado depois de '.', encontrado {:?}", x)),
+                    };
+                    expr = Expr::Field(Box::new(expr), name);
+                }
+                _ => break,
             }
-            Token::LeftParen => {
-                let e = self.expression()?;
-                self.expect(Token::RightParen)?;
-                Ok(e)
-            }
-            x => Err(format!("Nano: expressão inesperada {:?}", x)),
         }
+        Ok(expr)
     }
 }
 
@@ -325,12 +392,51 @@ impl Runtime {
         match e {
             Expr::Value(v) => Ok(v.clone()),
             Expr::Var(n) => self.vars.get(n).cloned().ok_or_else(|| format!("Nano: variável '{n}' não definida")),
+            Expr::List(items) => {
+                let mut values = Vec::new();
+                for item in items { values.push(self.eval(item)?); }
+                Ok(Value::List(values))
+            },
+            Expr::Object(fields) => {
+                let mut values = HashMap::new();
+                for (key, value) in fields { values.insert(key.clone(), self.eval(value)?); }
+                Ok(Value::Object(values))
+            },
             Expr::Binary(a, op, b) => {
                 let left = self.eval(a)?;
                 let right = self.eval(b)?;
                 self.binary(left, *op, right)
             },
+            Expr::Field(target, name) => {
+                match self.eval(target)? {
+                    Value::Object(values) => values.get(name).cloned()
+                        .ok_or_else(|| format!("Nano: campo '{name}' não existe")),
+                    _ => Err("Nano: '.' requer um objeto".into()),
+                }
+            },
+            Expr::Index(target, index) => {
+                let value = self.eval(target)?;
+                let key = self.eval(index)?;
+                match (value, key) {
+                    (Value::List(values), Value::Number(n)) => {
+                        if n < 0.0 || n.fract() != 0.0 { return Err("Nano: índice deve ser um número inteiro".into()); }
+                        values.get(n as usize).cloned().ok_or_else(|| "Nano: índice fora do limite".into())
+                    }
+                    (Value::Object(values), Value::Text(key)) => values.get(&key).cloned()
+                        .ok_or_else(|| format!("Nano: chave '{key}' não existe")),
+                    _ => Err("Nano: indexação requer lista[número] ou objeto[texto]".into()),
+                }
+            },
             Expr::Call(name, args) => {
+                if name == "len" {
+                    if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
+                    return match self.eval(&args[0])? {
+                        Value::Text(v) => Ok(Value::Number(v.chars().count() as f64)),
+                        Value::List(v) => Ok(Value::Number(v.len() as f64)),
+                        Value::Object(v) => Ok(Value::Number(v.len() as f64)),
+                        _ => Err("Nano: len() requer texto, lista ou objeto".into()),
+                    };
+                }
                 let (params, body) = self.functions.get(name).cloned().ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
                 if params.len() != args.len() { return Err(format!("Nano: '{name}' esperava {} argumentos", params.len())); }
                 let saved = self.vars.clone();
@@ -355,7 +461,8 @@ impl Runtime {
                 (Value::Text(x), Value::Text(y)) => Ok(Value::Text(x + &y)),
                 (Value::Text(x), y) => Ok(Value::Text(x + &y.show())),
                 (x, Value::Text(y)) => Ok(Value::Text(x.show() + &y)),
-                _ => Err("Nano: '+' requer números ou texto".into()),
+                (Value::List(mut x), Value::List(y)) => { x.extend(y); Ok(Value::List(x)) },
+                _ => Err("Nano: '+' requer números, texto ou listas compatíveis".into()),
             },
             Op::Sub => num(a,b,|x,y| x-y),
             Op::Mul => num(a,b,|x,y| x*y),
