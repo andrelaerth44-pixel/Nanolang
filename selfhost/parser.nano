@@ -553,7 +553,7 @@ function parse_primary(tokens, index) {
     return fail(index, "expressão esperada")
 }
 
-function main() {
+function parser_main() {
     tokens = lex("main.nano")
     parsed = parse_program(tokens)
     print to_text(parsed)
