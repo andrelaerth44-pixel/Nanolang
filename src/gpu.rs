@@ -233,6 +233,35 @@ impl TensorBackend for GpuBackend {
         self.dispatch(&self.elementwise,&[&a,&b],&params,(((left.len() as u32)+255)/256,1,1),left.len())
     }
 
+    fn fused_mul_add(
+        &self,
+        left: &[f32],
+        right: &[f32],
+        bias: &[f32],
+        shape: &[usize],
+    ) -> Result<Vec<f32>, BackendError> {
+        let expected = shape.iter().copied().product::<usize>();
+        if left.len() != expected || right.len() != expected || bias.len() != expected {
+            return Err(BackendError("fused_mul_add GPU recebeu buffers incompatíveis".into()));
+        }
+
+        let a = self.create_buffer(&Self::bytes_f32(left), wgpu::BufferUsages::STORAGE);
+        let b = self.create_buffer(&Self::bytes_f32(right), wgpu::BufferUsages::STORAGE);
+        let c = self.create_buffer(&Self::bytes_f32(bias), wgpu::BufferUsages::STORAGE);
+        let params = self.create_buffer(
+            &Self::bytes_u32(&[left.len() as u32, 0, 0, 0]),
+            wgpu::BufferUsages::UNIFORM,
+        );
+
+        self.dispatch(
+            &self.fma,
+            &[&a, &b, &c],
+            &params,
+            (((left.len() as u32) + 255) / 256, 1, 1),
+            left.len(),
+        )
+    }
+
     fn reduce(&self,data:&[f32],mean:bool)->Result<f32,BackendError>{
         if data.is_empty(){return Ok(0.0);}
         let input=self.create_buffer(&Self::bytes_f32(data),wgpu::BufferUsages::STORAGE);
