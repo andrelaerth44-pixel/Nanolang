@@ -814,8 +814,18 @@ impl IrRuntime {
             "std.fs.list" => "fs_list",
             "std.fs.mkdir" => "fs_mkdir",
             "std.fs.remove" => "fs_remove",
+            "std.fs.is_file" => "fs_is_file",
+            "std.fs.is_dir" => "fs_is_dir",
+            "std.fs.cwd" => "fs_cwd",
+            "std.path.join" => "path_join",
+            "std.path.basename" => "path_basename",
+            "std.path.dirname" => "path_dirname",
+            "std.path.extension" => "path_extension",
             "std.process.spawn" => "process_spawn",
             "std.process.wait" => "process_wait",
+            "std.process.output" => "process_output",
+            "std.os.cwd" => "os_cwd",
+            "std.os.args" => "os_args",
             "std.time.now_ms" => "time_now_ms",
             "std.time.sleep_ms" => "time_sleep_ms",
             "std.net.tcp_connect" => "net_tcp_connect",
@@ -849,6 +859,8 @@ impl IrRuntime {
             "std.async.send" => "send",
             "std.async.recv" => "recv",
             "std.async.close_channel" => "close_channel",
+            "std.async.sleep_ms" => "time_sleep_ms",
+            "std.async.yield" => "thread_yield",
             other => other,
         };
 
@@ -878,6 +890,39 @@ impl IrRuntime {
             if args.len() != 1 { return Err("Nano: fs_exists() recebe caminho".into()); }
             let path = text_arg(&args[0], "caminho")?;
             return Ok(Value::Boolean(Path::new(&path).exists()));
+        }
+
+        if name == "fs_is_file" || name == "fs_is_dir" {
+            if args.len() != 1 { return Err(format!("Nano: {name}() recebe caminho")); }
+            let path = text_arg(&args[0], "caminho")?;
+            let metadata = fs::metadata(&path).map_err(|e| format!("Nano: {name}('{path}'): {e}"))?;
+            return Ok(Value::Boolean(if name == "fs_is_file" { metadata.is_file() } else { metadata.is_dir() }));
+        }
+
+        if name == "fs_cwd" || name == "os_cwd" {
+            if !args.is_empty() { return Err(format!("Nano: {name}() não recebe argumentos")); }
+            return std::env::current_dir()
+                .map(|path| Value::Text(path.to_string_lossy().into_owned()))
+                .map_err(|e| format!("Nano: {name}(): {e}"));
+        }
+
+        if name == "path_join" {
+            if args.len() < 2 { return Err("Nano: path_join() recebe pelo menos 2 caminhos".into()); }
+            let mut path = PathBuf::from(text_arg(&args[0], "caminho")?);
+            for arg in &args[1..] { path.push(text_arg(arg, "caminho")?); }
+            return Ok(Value::Text(path.to_string_lossy().into_owned()));
+        }
+
+        if matches!(name, "path_basename" | "path_dirname" | "path_extension") {
+            if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 caminho")); }
+            let value = text_arg(&args[0], "caminho")?;
+            let path = Path::new(&value);
+            let output = match name {
+                "path_basename" => path.file_name().map(|v| v.to_string_lossy().into_owned()).unwrap_or_default(),
+                "path_dirname" => path.parent().map(|v| v.to_string_lossy().into_owned()).unwrap_or_default(),
+                _ => path.extension().map(|v| v.to_string_lossy().into_owned()).unwrap_or_default(),
+            };
+            return Ok(Value::Text(output));
         }
 
         if name == "fs_list" {
@@ -947,6 +992,12 @@ impl IrRuntime {
             self.next_handle += 1;
             self.children.insert(handle, child);
             return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "thread_yield" {
+            if !args.is_empty() { return Err("Nano: thread_yield() não recebe argumentos".into()); }
+            thread::yield_now();
+            return Ok(Value::Null);
         }
 
         if name == "thread_spawn" {
@@ -1041,6 +1092,24 @@ impl IrRuntime {
             let mut child = self.children.remove(&handle).ok_or_else(|| format!("Nano: processo {handle} não encontrado"))?;
             let status = child.wait().map_err(|e| format!("Nano: process_wait(): {e}"))?;
             return Ok(Value::Number(status.code().unwrap_or(-1) as f64));
+        }
+
+        if name == "process_output" {
+            if args.len() != 2 { return Err("Nano: process_output() recebe comando e lista de argumentos".into()); }
+            let command = text_arg(&args[0], "comando")?;
+            let argv = text_list_arg(&args[1], "argumentos")?;
+            let output = Command::new(&command).args(argv).output()
+                .map_err(|e| format!("Nano: process_output('{command}'): {e}"))?;
+            let mut result = HashMap::new();
+            result.insert("code".into(), Value::Number(output.status.code().unwrap_or(-1) as f64));
+            result.insert("stdout".into(), Value::Text(String::from_utf8_lossy(&output.stdout).into_owned()));
+            result.insert("stderr".into(), Value::Text(String::from_utf8_lossy(&output.stderr).into_owned()));
+            return Ok(Value::Object(result));
+        }
+
+        if name == "os_args" {
+            if !args.is_empty() { return Err("Nano: os_args() não recebe argumentos".into()); }
+            return Ok(Value::List(std::env::args().map(Value::Text).collect()));
         }
 
         if name == "net_http_get" {
