@@ -13,6 +13,21 @@ impl BackendKind {
             Self::Gpu => "gpu",
         }
     }
+
+    pub(crate) fn parse(value: &str) -> Result<Self, BackendError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "cpu" => Ok(Self::Cpu),
+            "gpu" => Ok(Self::Gpu),
+            other => Err(BackendError(format!("backend desconhecido: '{other}'"))),
+        }
+    }
+}
+
+pub(crate) fn create(kind: BackendKind) -> Result<Box<dyn TensorBackend>, BackendError> {
+    match kind {
+        BackendKind::Cpu => Ok(Box::new(CpuBackend)),
+        BackendKind::Gpu => Err(BackendError("backend GPU ainda não está implementado".into())),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +142,3 @@ impl TensorBackend for CpuBackend {
     }
 }
 
-pub(crate) fn cpu() -> CpuBackend {
-    CpuBackend
-}
