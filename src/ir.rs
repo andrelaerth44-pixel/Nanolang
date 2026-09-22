@@ -36,6 +36,50 @@ pub(crate) struct IrProgram {
 
 pub(crate) struct Compiler;
 
+pub(crate) struct Optimizer;
+
+impl Optimizer {
+    pub(crate) fn new() -> Self { Self }
+
+    pub(crate) fn optimize_program(&mut self, mut program: IrProgram) -> IrProgram {
+        program.code = self.optimize_code(program.code);
+        for function in program.functions.values_mut() {
+            function.code = self.optimize_code(function.code.clone());
+        }
+        program
+    }
+
+    fn optimize_code(&self, code: Vec<IrInst>) -> Vec<IrInst> {
+        let mut out: Vec<IrInst> = Vec::with_capacity(code.len());
+
+        for inst in code {
+            if let IrInst::Binary(op) = &inst {
+                if out.len() >= 2 {
+                    let right = out[out.len() - 1].clone();
+                    let left = out[out.len() - 2].clone();
+                    if let (IrInst::Const(a), IrInst::Const(b)) = (left, right) {
+                        if let Ok(value) = binary(a, *op, b) {
+                            out.truncate(out.len() - 2);
+                            out.push(IrInst::Const(value));
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if let IrInst::Jump(target) = &inst {
+                if *target == out.len() + 1 {
+                    continue;
+                }
+            }
+
+            out.push(inst);
+        }
+
+        out
+    }
+}
+
 impl Compiler {
     pub(crate) fn new() -> Self { Self }
 
