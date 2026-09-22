@@ -2348,7 +2348,7 @@ impl IrRuntime {
                 .map_err(|e| format!("Nano: módulo '{}': {e}", canonical.display()))?;
 
             let mut semantic = Semantic::new();
-            semantic.check(&program)?;
+            semantic.check_with_base(&program, canonical.parent())?;
 
             let mut compiler = Compiler::new();
             let module = compiler.compile(&program)?;
