@@ -888,6 +888,23 @@ impl IrRuntime {
     }
 
     fn call(&mut self, name: &str, args: Vec<Value>) -> Result<Value, String> {
+        // User-defined Nano functions shadow host built-ins for direct calls.
+        // Qualified std.* names keep their explicit host mapping below.
+        if !name.starts_with("std.") {
+            if let Some(function) = self.functions.get(name).cloned() {
+                if function.params.len() != args.len() {
+                    return Err(format!("Nano: '{name}' esperava {} argumentos", function.params.len()));
+                }
+                let saved = self.vars.clone();
+                for (param, value) in function.params.iter().zip(args) {
+                    self.vars.insert(param.clone(), value);
+                }
+                let result = self.execute_code(&function.code)?.unwrap_or(Value::Null);
+                self.vars = saved;
+                return Ok(result);
+            }
+        }
+
         let name = match name {
             "std.fs.read_text" => "fs_read_text",
             "std.fs.write_text" => "fs_write_text",
