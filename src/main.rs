@@ -144,6 +144,7 @@ enum TensorStorage {
     F32(Vec<f32>),
     F16(Vec<f16>),
     BF16(Vec<bf16>),
+    Remote { len: usize, dtype: DType },
 }
 
 impl TensorStorage {
@@ -160,6 +161,7 @@ impl TensorStorage {
             Self::F32(v) => v.clone(),
             Self::F16(v) => v.iter().map(|x| x.to_f32()).collect(),
             Self::BF16(v) => v.iter().map(|x| x.to_f32()).collect(),
+            Self::Remote { .. } => panic!("Nano: dados do tensor ainda estão somente na GPU"),
         }
     }
 
@@ -168,13 +170,16 @@ impl TensorStorage {
             Self::F32(v) => v.len(),
             Self::F16(v) => v.len(),
             Self::BF16(v) => v.len(),
+            Self::Remote { len, .. } => *len,
         }
     }
 
     fn bytes(&self) -> usize {
-        self.len() * match self {
-            Self::F32(_) => 4,
-            Self::F16(_) | Self::BF16(_) => 2,
+        match self {
+            Self::F32(v) => v.len() * 4,
+            Self::F16(v) => v.len() * 2,
+            Self::BF16(v) => v.len() * 2,
+            Self::Remote { len, dtype } => len * dtype.bytes(),
         }
     }
 }
@@ -251,6 +256,30 @@ impl Tensor {
         if expected!=data.len(){return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}",data.len(),expected));}
         Ok(Rc::new(RefCell::new(Self{id,storage:TensorStorage::from_f32(dtype,data),shape,dtype,requires_grad,device,op,host_valid:true})))
     }
+    fn remote_with_id(
+        id: u64,
+        shape: Vec<usize>,
+        requires_grad: bool,
+        device: backend::BackendKind,
+        dtype: DType,
+        op: TensorOp,
+    ) -> Result<TensorRef, String> {
+        if device != backend::BackendKind::Gpu {
+            return Err("Nano: tensor remoto exige backend GPU".into());
+        }
+        let expected=shape.iter().copied().product::<usize>();
+        Ok(Rc::new(RefCell::new(Self{
+            id,
+            storage:TensorStorage::Remote{len:expected,dtype},
+            shape,
+            dtype,
+            requires_grad,
+            device,
+            op,
+            host_valid:false,
+        })))
+    }
+
     fn data_f32(&self) -> Vec<f32> { self.storage.to_f32() }
     fn set_data_f32(&mut self, data: Vec<f32>) { self.storage = TensorStorage::from_f32(self.dtype, data); self.host_valid = true; }
     fn mark_host_stale(&mut self) { self.host_valid = false; }

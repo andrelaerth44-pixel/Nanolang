@@ -673,6 +673,15 @@ impl IrRuntime {
             (p.id, p.data_len())
         };
 
+        if self.backend.kind()==backend::BackendKind::Gpu {
+            let state=self.adam.entry(id).or_insert_with(||AdamState{step:0,m:Vec::new(),v:Vec::new()});
+            state.step+=1;
+            self.backend.adam_resident_async(id,grad.borrow().id,len,lr,state.step as u32)
+                .map_err(|e|format!("Nano: GPU Adam: {e}"))?;
+            param.borrow_mut().mark_host_stale();
+            return Ok(Value::Tensor(param));
+        }
+
         let state = self.adam.entry(id).or_insert_with(|| AdamState {
             step: 0,
             m: vec![0.0; len],
@@ -689,8 +698,6 @@ impl IrRuntime {
         let beta2 = 0.999_f32;
         let eps = 1e-8_f32;
 
-        self.sync_tensor_host(&param)?;
-        self.sync_tensor_host(&grad)?;
         self.sync_tensor_host(&param)?;
         self.sync_tensor_host(&grad)?;
         let mut data = param.borrow().data_f32();
@@ -758,13 +765,26 @@ impl IrRuntime {
             }
             (Value::Tensor(tensor), Value::Number(n), Op::Mul) |
             (Value::Number(n), Value::Tensor(tensor), Op::Mul) => {
-                let source = tensor.borrow();
-                let scalar_data=vec![*n as f32;source.data_len()];
-                let scalar=super::Tensor::new_with_dtype_on(scalar_data.clone(),source.shape.clone(),false,self.backend.kind(),source.dtype)?;
-                let scalar_id=scalar.borrow().id;
-                self.backend.sync_tensor(scalar_id,&scalar_data).map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
-                let out=tensor_elementwise(tensor,&scalar,TensorOpKind::Mul,self.backend.as_ref())?;
-                let _=self.backend.release_tensor(scalar_id);
+                let source=tensor.borrow();
+                if source.device==backend::BackendKind::Gpu {
+                    let output_id=super::next_tensor_id();
+                    let shape=source.shape.clone();
+                    let dtype=source.dtype;
+                    let requires_grad=source.requires_grad;
+                    let elements=source.data_len();
+                    let input_id=source.id;
+                    self.backend.scale_resident_async(input_id,elements,*n as f32,output_id)
+                        .map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+                    let out=super::Tensor::remote_with_id(
+                        output_id,shape,requires_grad,self.backend.kind(),dtype,TensorOp::Leaf
+                    )?;
+                    return Ok(Value::Tensor(out));
+                }
+                let data=source.data_f32().into_iter().map(|v|v*(*n as f32)).collect();
+                let out=super::Tensor::derived_dtype_on_with_id(
+                    super::next_tensor_id(),data,source.shape.clone(),source.requires_grad,
+                    self.backend.kind(),source.dtype,TensorOp::Leaf
+                )?;
                 Ok(Value::Tensor(out))
             }
             _ => binary(a, op, b),
@@ -1089,6 +1109,163 @@ fn sync_graph_host(
     Ok(())
 }
 
+fn gpu_remote_tensor(
+    id: u64,
+    source: &TensorRef,
+    shape: Vec<usize>,
+    backend: &dyn TensorBackend,
+) -> Result<TensorRef, String> {
+    let (dtype, requires_grad) = {
+        let t=source.borrow();
+        (t.dtype,false)
+    };
+    super::Tensor::remote_with_id(id,shape,requires_grad,backend.kind(),dtype,TensorOp::Leaf)
+}
+
+fn gpu_gradient_accumulate(
+    node: &TensorRef,
+    upstream: &TensorRef,
+    grads: &mut HashMap<u64, TensorRef>,
+    backend: &dyn TensorBackend,
+) -> Result<(), String> {
+    let (id, shape, dtype) = {
+        let t=node.borrow();
+        (t.id,t.shape.clone(),t.dtype)
+    };
+    if let Some(existing)=grads.get(&id).cloned() {
+        let output_id=super::next_tensor_id();
+        backend.elementwise_resident_async(
+            existing.borrow().id,
+            upstream.borrow().id,
+            &shape,
+            ElementwiseOp::Add,
+            output_id,
+        ).map_err(|e|format!("Nano: GPU grad accumulate: {e}"))?;
+        let sum=super::Tensor::remote_with_id(output_id,shape,false,backend.kind(),dtype,TensorOp::Leaf)?;
+        grads.insert(id,sum);
+    } else {
+        grads.insert(id,std::rc::Rc::clone(upstream));
+    }
+    Ok(())
+}
+
+fn backward_gpu(
+    node: &TensorRef,
+    upstream: TensorRef,
+    grads: &mut HashMap<u64, TensorRef>,
+    backend: &dyn TensorBackend,
+) -> Result<(), String> {
+    let op=node.borrow().op.clone();
+    match op {
+        TensorOp::Leaf => {
+            gpu_gradient_accumulate(node,&upstream,grads,backend)
+        }
+        TensorOp::Elementwise(kind,left,right) => {
+            let shape=node.borrow().shape.clone();
+            match kind {
+                TensorOpKind::Add => {
+                    backward_gpu(&left,std::rc::Rc::clone(&upstream),grads,backend)?;
+                    backward_gpu(&right,upstream,grads,backend)?;
+                }
+                TensorOpKind::Sub => {
+                    backward_gpu(&left,std::rc::Rc::clone(&upstream),grads,backend)?;
+                    let output_id=super::next_tensor_id();
+                    backend.scale_resident_async(upstream.borrow().id,upstream.borrow().data_len(),-1.0,output_id)
+                        .map_err(|e|format!("Nano: GPU grad sub: {e}"))?;
+                    let neg=super::Tensor::remote_with_id(output_id,shape,false,backend.kind(),right.borrow().dtype,TensorOp::Leaf)?;
+                    backward_gpu(&right,neg,grads,backend)?;
+                }
+                TensorOpKind::Mul => {
+                    let lout=super::next_tensor_id();
+                    backend.elementwise_resident_async(upstream.borrow().id,right.borrow().id,&shape,ElementwiseOp::Mul,lout)
+                        .map_err(|e|format!("Nano: GPU grad mul: {e}"))?;
+                    let lg=super::Tensor::remote_with_id(lout,left.borrow().shape.clone(),false,backend.kind(),left.borrow().dtype,TensorOp::Leaf)?;
+                    let rout=super::next_tensor_id();
+                    backend.elementwise_resident_async(upstream.borrow().id,left.borrow().id,&shape,ElementwiseOp::Mul,rout)
+                        .map_err(|e|format!("Nano: GPU grad mul: {e}"))?;
+                    let rg=super::Tensor::remote_with_id(rout,right.borrow().shape.clone(),false,backend.kind(),right.borrow().dtype,TensorOp::Leaf)?;
+                    backward_gpu(&left,lg,grads,backend)?;
+                    backward_gpu(&right,rg,grads,backend)?;
+                }
+                TensorOpKind::Div => {
+                    let lgid=super::next_tensor_id();
+                    backend.elementwise_resident_async(upstream.borrow().id,right.borrow().id,&shape,ElementwiseOp::Div,lgid)
+                        .map_err(|e|format!("Nano: GPU grad div: {e}"))?;
+                    let lg=super::Tensor::remote_with_id(lgid,left.borrow().shape.clone(),false,backend.kind(),left.borrow().dtype,TensorOp::Leaf)?;
+
+                    let sqid=super::next_tensor_id();
+                    backend.elementwise_resident_async(right.borrow().id,right.borrow().id,&shape,ElementwiseOp::Mul,sqid)
+                        .map_err(|e|format!("Nano: GPU grad div: {e}"))?;
+                    let numid=super::next_tensor_id();
+                    backend.elementwise_resident_async(upstream.borrow().id,left.borrow().id,&shape,ElementwiseOp::Mul,numid)
+                        .map_err(|e|format!("Nano: GPU grad div: {e}"))?;
+                    let posid=super::next_tensor_id();
+                    backend.elementwise_resident_async(numid,sqid,&shape,ElementwiseOp::Div,posid)
+                        .map_err(|e|format!("Nano: GPU grad div: {e}"))?;
+                    let negid=super::next_tensor_id();
+                    backend.scale_resident_async(posid,shape.iter().copied().product::<usize>(),-1.0,negid)
+                        .map_err(|e|format!("Nano: GPU grad div: {e}"))?;
+                    let rg=super::Tensor::remote_with_id(negid,right.borrow().shape.clone(),false,backend.kind(),right.borrow().dtype,TensorOp::Leaf)?;
+                    backward_gpu(&left,lg,grads,backend)?;
+                    backward_gpu(&right,rg,grads,backend)?;
+                }
+            }
+            Ok(())
+        }
+        TensorOp::Sum(input) => {
+            let elements=input.borrow().data_len();
+            let outid=super::next_tensor_id();
+            backend.broadcast_resident_async(upstream.borrow().id,elements,1.0,outid)
+                .map_err(|e|format!("Nano: GPU grad sum: {e}"))?;
+            let grad=super::Tensor::remote_with_id(outid,input.borrow().shape.clone(),false,backend.kind(),input.borrow().dtype,TensorOp::Leaf)?;
+            backward_gpu(&input,grad,grads,backend)
+        }
+        TensorOp::Mean(input) => {
+            let elements=input.borrow().data_len().max(1);
+            let outid=super::next_tensor_id();
+            backend.broadcast_resident_async(upstream.borrow().id,elements,1.0/(elements as f32),outid)
+                .map_err(|e|format!("Nano: GPU grad mean: {e}"))?;
+            let grad=super::Tensor::remote_with_id(outid,input.borrow().shape.clone(),false,backend.kind(),input.borrow().dtype,TensorOp::Leaf)?;
+            backward_gpu(&input,grad,grads,backend)
+        }
+        TensorOp::FusedMulAdd(left,right,bias) => {
+            let shape=node.borrow().shape.clone();
+            let lid=super::next_tensor_id();
+            backend.elementwise_resident_async(upstream.borrow().id,right.borrow().id,&shape,ElementwiseOp::Mul,lid)
+                .map_err(|e|format!("Nano: GPU grad FMA: {e}"))?;
+            let lg=super::Tensor::remote_with_id(lid,left.borrow().shape.clone(),false,backend.kind(),left.borrow().dtype,TensorOp::Leaf)?;
+            let rid=super::next_tensor_id();
+            backend.elementwise_resident_async(upstream.borrow().id,left.borrow().id,&shape,ElementwiseOp::Mul,rid)
+                .map_err(|e|format!("Nano: GPU grad FMA: {e}"))?;
+            let rg=super::Tensor::remote_with_id(rid,right.borrow().shape.clone(),false,backend.kind(),right.borrow().dtype,TensorOp::Leaf)?;
+            backward_gpu(&left,lg,grads,backend)?;
+            backward_gpu(&right,rg,grads,backend)?;
+            backward_gpu(&bias,upstream,grads,backend)
+        }
+        TensorOp::Matmul(left,right) => {
+            let out_shape=node.borrow().shape.clone();
+            let left_shape=left.borrow().shape.clone();
+            let right_shape=right.borrow().shape.clone();
+            let lid=super::next_tensor_id();
+            backend.matmul_transposed_resident_async(
+                upstream.borrow().id,&out_shape,
+                right.borrow().id,&right_shape,
+                false,true,lid,&left_shape
+            ).map_err(|e|format!("Nano: GPU grad matmul: {e}"))?;
+            let lg=super::Tensor::remote_with_id(lid,left_shape.clone(),false,backend.kind(),left.borrow().dtype,TensorOp::Leaf)?;
+            let rid=super::next_tensor_id();
+            backend.matmul_transposed_resident_async(
+                left.borrow().id,&left_shape,
+                upstream.borrow().id,&out_shape,
+                true,false,rid,&right_shape
+            ).map_err(|e|format!("Nano: GPU grad matmul: {e}"))?;
+            let rg=super::Tensor::remote_with_id(rid,right_shape.clone(),false,backend.kind(),right.borrow().dtype,TensorOp::Leaf)?;
+            backward_gpu(&left,lg,grads,backend)?;
+            backward_gpu(&right,rg,grads,backend)
+        }
+    }
+}
+
 fn gradient_value(loss: &Value, parameter: &Value, backend: &dyn TensorBackend) -> Result<Value, String> {
     let loss_ref = match loss {
         Value::Tensor(t) => std::rc::Rc::clone(t),
@@ -1100,6 +1277,26 @@ fn gradient_value(loss: &Value, parameter: &Value, backend: &dyn TensorBackend) 
     };
 
     let output_shape=param_ref.borrow().shape.clone();
+    if backend.kind()==backend::BackendKind::Gpu {
+        let loss_shape=loss_ref.borrow().shape.clone();
+        let loss_dtype=loss_ref.borrow().dtype;
+        let upstream_id=super::next_tensor_id();
+        backend.fill_resident_async(loss_ref.borrow().data_len(),1.0,upstream_id)
+            .map_err(|e|format!("Nano: GPU grad seed: {e}"))?;
+        let upstream=super::Tensor::remote_with_id(upstream_id,loss_shape,false,backend.kind(),loss_dtype,TensorOp::Leaf)?;
+        let mut grads:HashMap<u64,TensorRef>=HashMap::new();
+        backward_gpu(&loss_ref,upstream,&mut grads,backend)?;
+        let param_id=param_ref.borrow().id;
+        if let Some(grad)=grads.remove(&param_id) {
+            return Ok(Value::Tensor(grad));
+        }
+        let shape=param_ref.borrow().shape.clone();
+        let dtype=param_ref.borrow().dtype;
+        let output_id=super::next_tensor_id();
+        backend.fill_resident_async(param_ref.borrow().data_len(),0.0,output_id)
+            .map_err(|e|format!("Nano: GPU grad zero: {e}"))?;
+        return Ok(Value::Tensor(super::Tensor::remote_with_id(output_id,shape,false,backend.kind(),dtype,TensorOp::Leaf)?));
+    }
     let mut seen=HashSet::new();
     sync_graph_host(&loss_ref,backend,&mut seen)?;
     let mut grads: HashMap<u64,Vec<f32>>=HashMap::new();
@@ -1132,17 +1329,18 @@ fn step_value(parameter: &Value, gradient: &Value, rate: &Value, backend: &dyn T
         _ => return Err("Nano: step() requer taxa Number".into()),
     };
 
+    {
+        let p=param.borrow(); let g=grad.borrow();
+        if p.shape!=g.shape{return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());}
+        if p.device!=g.device{return Err("Nano: parâmetro e gradiente precisam estar no mesmo dispositivo".into());}
+        if backend.kind()==backend::BackendKind::Gpu {
+            backend.step_resident_async(p.id,g.id,p.data_len(),lr)
+                .map_err(|e|format!("Nano: GPU step: {e}"))?;
+            param.borrow_mut().mark_host_stale();
+            return Ok(Value::Tensor(param));
+        }
+    }
     let (mut data, gradient) = {
-        let p = param.borrow();
-        let g = grad.borrow();
-        if p.shape != g.shape {
-            return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
-        }
-        if p.device != g.device {
-            return Err("Nano: parâmetro e gradiente precisam estar no mesmo dispositivo".into());
-        }
-        (p.data_f32(), g.data_f32())
-    };
     for (value, delta) in data.iter_mut().zip(&gradient) {
         *value -= lr * delta;
     }
