@@ -7,7 +7,6 @@ use pollster::block_on;
 use wgpu::util::DeviceExt;
 
 use crate::backend::{BackendError, BackendKind, ElementwiseOp, TensorBackend};
-use crate::backend::TensorBackend;
 use crate::dtype::DType;
 use crate::memory::MemoryPlanner;
 
@@ -711,6 +710,8 @@ impl TensorBackend for GpuBackend {
 
 #[cfg(test)]
 mod tests {
+    use crate::backend::TensorBackend;
+
     #[test]
     fn gpu_backend_contains_real_compute_shaders() {
         assert!(!super::MATMUL_SHADER.is_empty());
