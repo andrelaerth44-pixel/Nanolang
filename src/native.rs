@@ -312,6 +312,47 @@ impl NativeModule {
         Ok(())
     }
 
+    fn load_stack(&mut self, slot: usize, reg: &str) {
+        self.text.push_str(&format!(
+            "    movsd {}(%rbp), {reg}\n",
+            stack_offset(slot)
+        ));
+    }
+
+    fn add_float(&mut self, value: f64) -> String {
+        let id = self.float_constants.len();
+        self.float_constants.push(value);
+        format!(".LCF{id}")
+    }
+
+    fn add_text(&mut self, value: &str) -> String {
+        let id = self.text_constants.len();
+        self.text_constants.push(value.as_bytes().to_vec());
+        format!(".LCT{id}")
+    }
+
+    fn render(self) -> String {
+        let mut text = self.text;
+        text.push_str("\n    .section .rodata\n");
+        text.push_str("nano_fmt:\n    .byte 37,103,10,0\n");
+        for (i, value) in self.float_constants.iter().enumerate() {
+            text.push_str(&format!(".LCF{i}:\n    .double {value:.17e}\n"));
+        }
+        for (i, value) in self.text_constants.iter().enumerate() {
+            text.push_str(&format!(".LCT{i}:\n    .byte "));
+            for (index, byte) in value.iter().chain(std::iter::once(&0u8)).enumerate() {
+                if index > 0 {
+                    text.push_str(", ");
+                }
+                text.push_str(&byte.to_string());
+            }
+            text.push('\n');
+        }
+        text.push_str("\n    .section .text\n    .globl main\nmain:\n    subq $8, %rsp\n    call nano_fn__main\n    addq $8, %rsp\n    xorl %eax, %eax\n    ret\n");
+        text.push_str("\n    .section .note.GNU-stack,\"\",@progbits\n");
+        text
+    }
+}
 
 fn analyze_stack(
     code: &[IrInst],
@@ -462,49 +503,6 @@ fn analyze_stack(
     }
 
     Ok((states, max_stack))
-}
-
-
-    fn load_stack(&mut self, slot: usize, reg: &str) {
-        self.text.push_str(&format!(
-            "    movsd {}(%rbp), {reg}\n",
-            stack_offset(slot)
-        ));
-    }
-
-    fn add_float(&mut self, value: f64) -> String {
-        let id = self.float_constants.len();
-        self.float_constants.push(value);
-        format!(".LCF{id}")
-    }
-
-    fn add_text(&mut self, value: &str) -> String {
-        let id = self.text_constants.len();
-        self.text_constants.push(value.as_bytes().to_vec());
-        format!(".LCT{id}")
-    }
-
-    fn render(self) -> String {
-        let mut text = self.text;
-        text.push_str("\n    .section .rodata\n");
-        text.push_str("nano_fmt:\n    .byte 37,103,10,0\n");
-        for (i, value) in self.float_constants.iter().enumerate() {
-            text.push_str(&format!(".LCF{i}:\n    .double {value:.17e}\n"));
-        }
-        for (i, value) in self.text_constants.iter().enumerate() {
-            text.push_str(&format!(".LCT{i}:\n    .byte "));
-            for (index, byte) in value.iter().chain(std::iter::once(&0u8)).enumerate() {
-                if index > 0 {
-                    text.push_str(", ");
-                }
-                text.push_str(&byte.to_string());
-            }
-            text.push('\n');
-        }
-        text.push_str("\n    .section .text\n    .globl main\nmain:\n    subq $8, %rsp\n    call nano_fn__main\n    addq $8, %rsp\n    xorl %eax, %eax\n    ret\n");
-        text.push_str("\n    .section .note.GNU-stack,\"\",@progbits\n");
-        text
-    }
 }
 
 fn sanitize(name: &str) -> String {
