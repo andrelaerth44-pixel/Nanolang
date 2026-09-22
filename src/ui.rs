@@ -184,11 +184,11 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
             }
         }
         if !vertices.is_empty() {
-            let bytes: &[u8] = bytemuck::cast_slice(&vertices);
+            let bytes: Vec<u8> = vertices.iter().flat_map(|value| value.to_ne_bytes()).collect();
             if bytes.len() > self.vertex_buffer.size() as usize {
                 return Err("Nano UI: buffer de vértices excedido".into());
             }
-            self.queue.write_buffer(&self.vertex_buffer, 0, bytes);
+            self.queue.write_buffer(&self.vertex_buffer, 0, &bytes);
         }
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("nano-ui-frame") });
