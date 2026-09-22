@@ -1,3 +1,4 @@
+mod ui;
 mod backend;
 mod dtype;
 mod gpu;
