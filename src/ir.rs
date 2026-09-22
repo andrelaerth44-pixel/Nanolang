@@ -265,7 +265,7 @@ impl Optimizer {
 }
 
 impl Compiler {
-    pub(crate) fn new() -> Self { Self }
+    pub(crate) fn new() -> Self { Self { break_targets: Vec::new() } }
 
     pub(crate) fn compile(&mut self, program: &[Stmt]) -> Result<IrProgram, String> {
         let mut functions = HashMap::new();
@@ -834,7 +834,6 @@ impl IrRuntime {
                 .map_err(|e| format!("Nano: não foi possível iniciar '{command}': {e}"))?;
             let handle = self.next_handle;
             self.next_handle += 1;
-            let pid = child.id() as f64;
             self.children.insert(handle, child);
             return Ok(Value::Number(handle as f64));
         }
@@ -1838,7 +1837,7 @@ fn tensor_elementwise(
         backend.elementwise_resident_async(left_id,right_id,&shape,backend_op,output_id)
             .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
         drop(left);drop(right);
-        let elements=shape.iter().copied().product::<usize>();
+        let _elements=shape.iter().copied().product::<usize>();
         let out=super::Tensor::remote_with_id(output_id,shape.clone(),requires_grad,backend.kind(),dtype,op_node)?;
         out.borrow_mut().mark_host_stale();
         return Ok(out);
