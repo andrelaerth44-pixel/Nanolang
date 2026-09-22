@@ -192,7 +192,7 @@ pub(crate) fn init(root: &Path, name: &str) -> Result<(), String> {
 
     let main_path = root.join("main.nano");
     if !main_path.exists() {
-        fs::write(&main_path, "function main() {\n    print \"Hello from Nano\"\n}\n")
+        fs::write(&main_path, "print \"Hello from Nano\"\n")
             .map_err(|e| format!("Nano package: não foi possível criar '{}': {e}", main_path.display()))?;
     }
     Ok(())
