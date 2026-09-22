@@ -1160,6 +1160,16 @@ impl Semantic {
                     }
                     return Ok(Type::List);
                 }
+                if name == "task_spawn" {
+                    if args.len() != 2 { return Err("Nano: task_spawn() recebe nome da função e List".into()); }
+                    if self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any {
+                        return Err("Nano: task_spawn() requer nome Text".into());
+                    }
+                    if self.expr_type(&args[1])? != Type::List && self.expr_type(&args[1])? != Type::Any {
+                        return Err("Nano: task_spawn() requer List de argumentos".into());
+                    }
+                    return Ok(Type::Number);
+                }
                 if name == "thread_spawn" {
                     if args.len() != 2 { return Err("Nano: thread_spawn() recebe comando e lista de argumentos".into()); }
                     if self.expr_type(&args[0])? != Type::Text || self.expr_type(&args[1])? != Type::List {
@@ -1167,12 +1177,12 @@ impl Semantic {
                     }
                     return Ok(Type::Number);
                 }
-                if name == "thread_join" {
-                    if args.len() != 1 { return Err("Nano: thread_join() recebe handle".into()); }
+                if name == "thread_join" || name == "task_join" {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe handle")); }
                     if self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any {
                         return Err("Nano: thread_join() requer Number".into());
                     }
-                    return Ok(Type::Number);
+                    return Ok(if name == "task_join" { Type::Any } else { Type::Number });
                 }
                 if name == "ui_window" {
                     if args.len() != 3 { return Err("Nano: ui_window() recebe título, largura e altura".into()); }
