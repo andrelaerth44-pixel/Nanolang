@@ -50,9 +50,7 @@ fn format_source(src: &str) -> String {
         }
         last_blank = false;
 
-        let (_, closes) = scan_braces(line);
         let starts_with_close = line.starts_with('}');
-        let leading_dedent = if starts_with_close { 1 } else { closes.min(indent) };
         if starts_with_close {
             indent = indent.saturating_sub(1);
         }
@@ -64,9 +62,10 @@ fn format_source(src: &str) -> String {
         out.push('\n');
 
         let (opens, closes) = scan_braces(line);
+        let non_leading_closes = closes.saturating_sub(if starts_with_close { 1 } else { 0 });
         indent = indent
             .saturating_add(opens)
-            .saturating_sub(closes.max(leading_dedent));
+            .saturating_sub(non_leading_closes);
     }
 
     if out.is_empty() {
@@ -119,5 +118,13 @@ mod tests {
         let src = "function main() {\nprint 1\nif true {\nprint 2\n}\n}\n";
         let once = format_source(src);
         assert_eq!(format_source(&once), once);
+    }
+
+    #[test]
+    fn keeps_else_at_block_depth() {
+        assert_eq!(
+            format_source("if true {\nprint 1\n} else {\nprint 2\n}\n"),
+            "if true {\n    print 1\n} else {\n    print 2\n}\n"
+        );
     }
 }
