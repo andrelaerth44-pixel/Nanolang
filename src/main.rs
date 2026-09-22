@@ -4,7 +4,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Ident(String), Number(f64), Text(String),
-    True, False, Function, Print, If, Else, Return,
+    True, False, Use, Function, Print, If, Else, Return,
     Plus, Minus, Star, Slash, Equal, EqualEqual, BangEqual,
     Greater, GreaterEqual, Less, LessEqual,
     LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Comma, Colon, Dot, Eof,
@@ -99,7 +99,7 @@ impl Lexer {
         while matches!(self.peek(), Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) { self.advance(); }
         match self.src[start..self.pos].iter().collect::<String>().as_str() {
             "true" => Token::True, "false" => Token::False,
-            "function" => Token::Function,
+            "use" => Token::Use, "function" => Token::Function,
             "print" => Token::Print, "if" => Token::If,
             "else" => Token::Else, "return" => Token::Return,
             s => Token::Ident(s.to_string()),
@@ -152,7 +152,7 @@ enum Op { Add, Sub, Mul, Div, Eq, Ne, Gt, Ge, Lt, Le }
 enum Stmt {
     Assign(String, Expr), Print(Expr), Expr(Expr),
     If(Expr, Vec<Stmt>, Vec<Stmt>),
-    Function(String, Vec<String>, Vec<Stmt>),
+    Use(String), Function(String, Vec<String>, Vec<Stmt>),
     Return(Expr),
 }
 
@@ -177,6 +177,7 @@ impl Parser {
     }
     fn statement(&mut self) -> Result<Stmt, String> {
         match self.peek() {
+            Token::Use => { self.advance(); match self.advance() { Token::Text(path) => Ok(Stmt::Use(path)), x => Err(format!("Nano: caminho do módulo esperado, encontrado {:?}", x)) } }
             Token::Function => self.function(),
             Token::Print => { self.advance(); Ok(Stmt::Print(self.expression()?)) }
             Token::If => self.if_stmt(),
@@ -373,6 +374,16 @@ impl Runtime {
 
     fn exec(&mut self, stmt: &Stmt) -> Result<Option<Value>, String> {
         match stmt {
+            Stmt::Use(path) => {
+                let source = fs::read_to_string(path)
+                    .map_err(|e| format!("Nano: não foi possível carregar módulo '{path}': {e}"))?;
+                let tokens = Lexer::new(&source).lex()?;
+                let program = Parser::new(tokens).program()?;
+                for item in &program {
+                    if let Some(v) = self.exec(item)? { return Ok(Some(v)); }
+                }
+                Ok(None)
+            }
             Stmt::Assign(n, e) => { let v = self.eval(e)?; self.vars.insert(n.clone(), v); Ok(None) }
             Stmt::Print(e) => { println!("{}", self.eval(e)?.show()); Ok(None) }
             Stmt::Expr(e) => { self.eval(e)?; Ok(None) }
@@ -497,7 +508,7 @@ fn main() {
         [_, command] if command == "run" => "main.nano".to_string(),
         [_, command, file] if command == "run" => file.clone(),
         _ => {
-            eprintln!("Nano 0.1 — uso: nano run [arquivo.nano]");
+            eprintln!("Nano 0.3 — uso: nano run [arquivo.nano]");
             process::exit(2);
         }
     };
