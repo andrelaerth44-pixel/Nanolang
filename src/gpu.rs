@@ -485,33 +485,27 @@ impl TensorBackend for GpuBackend {
         if k != k2 || left.len() != ar * ac || right.len() != br * bc {
             return Err(BackendError("matmul transposto GPU recebeu shapes incompatíveis".into()));
         }
-        let a_id = crate::next_tensor_id();
-        let b_id = crate::next_tensor_id();
-        let out_id = crate::next_tensor_id();
-        let a = self.ensure_resident(a_id, left)?;
-        let b = self.ensure_resident(b_id, right)?;
-        let out = self.resident_buffer(out_id, m * n)?;
-        let bytes = [
-            (m as u32).to_ne_bytes().as_slice(),
-            (k as u32).to_ne_bytes().as_slice(),
-            (n as u32).to_ne_bytes().as_slice(),
-            (if left_transpose { 1u32 } else { 0 }).to_ne_bytes().as_slice(),
-            (if right_transpose { 1u32 } else { 0 }).to_ne_bytes().as_slice(),
-            &[0;4], &[0;4], &[0;4],
-        ].concat();
-        let params = self.create_buffer(&bytes, wgpu::BufferUsages::UNIFORM);
-        let result = self.dispatch_into(
+
+        let a = self.create_buffer(&Self::bytes_f32(left), wgpu::BufferUsages::STORAGE);
+        let b = self.create_buffer(&Self::bytes_f32(right), wgpu::BufferUsages::STORAGE);
+        let params = self.create_buffer(
+            &[
+                (m as u32).to_ne_bytes().as_slice(),
+                (k as u32).to_ne_bytes().as_slice(),
+                (n as u32).to_ne_bytes().as_slice(),
+                (if left_transpose { 1u32 } else { 0 }).to_ne_bytes().as_slice(),
+                (if right_transpose { 1u32 } else { 0 }).to_ne_bytes().as_slice(),
+                &[0;4], &[0;4], &[0;4],
+            ].concat(),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        self.dispatch(
             &self.transposed_matmul,
             &[&a, &b],
             &params,
             (((n as u32) + 7) / 8, ((m as u32) + 7) / 8, 1),
-            &out,
             m * n,
-        );
-        let _ = self.resident.borrow_mut().remove(&a_id);
-        let _ = self.resident.borrow_mut().remove(&b_id);
-        let _ = self.resident.borrow_mut().remove(&out_id);
-        result
+        )
     }
 
     fn matmul_resident_async(&self,left_id:u64,left_shape:&[usize],right_id:u64,right_shape:&[usize],output_id:u64)->Result<(),BackendError>{
