@@ -12,15 +12,17 @@ tensor, parameter, zeros, shape, matmul, sum, mean, grad, step, adam, cast, dtyp
 
 ## Filesystem
 
-fs_read_text, fs_write_text, fs_append_text, fs_exists, fs_list, fs_mkdir, fs_remove.
+fs_read_text, fs_write_text, fs_append_text, fs_exists, fs_is_file, fs_is_dir, fs_cwd, fs_list, fs_mkdir, fs_remove.
+
+path_join, path_basename, path_dirname, path_extension.
 
 ## Processos e ambiente
 
-env_get, env_set, process_spawn, process_wait.
+env_get, env_set, os_cwd, os_args, process_spawn, process_wait, process_output.
 
 ## Tempo e concorrência
 
-time_now_ms, time_sleep_ms, thread_sleep_ms, thread_spawn, thread_join.
+time_now_ms, time_sleep_ms, thread_sleep_ms, thread_yield, thread_spawn, thread_join, task_spawn, task_join, channel, send, recv, close_channel.
 
 thread_spawn executa um comando externo em uma thread nativa e retorna um handle que pode ser aguardado com thread_join.
 
@@ -29,6 +31,10 @@ thread_spawn executa um comando externo em uma thread nativa e retorna um handle
 net_http_get, net_tcp_connect, net_tcp_listen, net_tcp_accept, net_tcp_send, net_tcp_recv, net_tcp_close.
 
 A camada atual fornece TCP direto. HTTP de alto nível pode ser construído sobre essa API.
+
+## JSON
+
+std.json.encode e std.json.decode fazem conversão entre Text JSON e os tipos Nano compatíveis: Number, Boolean, Text, Null, List e Object.
 
 ## UI
 
@@ -48,6 +54,9 @@ Estes imports são reconhecidos pelo runtime:
 - std.gfx
 - std.process
 - std.math
+- std.path
+- std.json
+- std.os
 
 Os nomes dos módulos formam o contrato de organização; as funções acima são a superfície runtime atualmente implementada.
 
