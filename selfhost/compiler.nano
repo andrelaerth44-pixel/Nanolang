@@ -1,0 +1,179 @@
+# Nano self-hosted compiler v0.1
+# AST -> Nano IR textual.
+# O IR textual usa labels; uma etapa posterior resolve labels para offsets.
+
+function state() {
+    return {next_label: 0}
+}
+
+function label(state) {
+    value = state.next_label
+    state.next_label = value + 1
+    return "L" + to_text(value)
+}
+
+function emit_expr(node) {
+    lines = []
+
+    if node.kind == "number" {
+        return append(lines, "const " + to_text(node.value))
+    }
+
+    if node.kind == "string" {
+        return append(lines, "const "" + node.value + """)
+    }
+
+    if node.kind == "boolean" {
+        return append(lines, "const " + to_text(node.value))
+    }
+
+    if node.kind == "ident" {
+        return append(lines, "load " + node.name)
+    }
+
+    if node.kind == "unary" {
+        lines = emit_expr(node.value)
+        return append(lines, "unary " + node.op)
+    }
+
+    if node.kind == "binary" {
+        lines = emit_expr(node.left)
+        right = emit_expr(node.right)
+        for line in right {
+            lines = append(lines, line)
+        }
+        return append(lines, "binary " + node.op)
+    }
+
+    if node.kind == "call" {
+        target = node.target.name
+        for arg in node.args {
+            part = emit_expr(arg)
+            for line in part {
+                lines = append(lines, line)
+            }
+        }
+        return append(lines, "call " + target + " " + to_text(len(node.args)))
+    }
+
+    if node.kind == "list" {
+        for item in node.items {
+            part = emit_expr(item)
+            for line in part {
+                lines = append(lines, line)
+            }
+        }
+        return append(lines, "make_list " + to_text(len(node.items)))
+    }
+
+    return append(lines, "unsupported " + node.kind)
+}
+
+function emit_block(body, state) {
+    lines = []
+    for stmt in body {
+        part = emit_stmt(stmt, state)
+        for line in part {
+            lines = append(lines, line)
+        }
+    }
+    return lines
+}
+
+function emit_stmt(stmt, state) {
+    lines = []
+
+    if stmt.kind == "assign" {
+        lines = emit_expr(stmt.value)
+        return append(lines, "store " + stmt.name)
+    }
+
+    if stmt.kind == "expr" {
+        lines = emit_expr(stmt.value)
+        return append(lines, "pop")
+    }
+
+    if stmt.kind == "print" {
+        lines = emit_expr(stmt.value)
+        return append(lines, "print")
+    }
+
+    if stmt.kind == "return" {
+        lines = emit_expr(stmt.value)
+        return append(lines, "return")
+    }
+
+    if stmt.kind == "use" {
+        return append(lines, "use " + stmt.path)
+    }
+
+    if stmt.kind == "if" {
+        condition = emit_expr(stmt.condition)
+        for line in condition {
+            lines = append(lines, line)
+        }
+        else_label = label(state)
+        end_label = label(state)
+        lines = append(lines, "jump_if_false " + else_label)
+
+        yes = emit_block(stmt.yes.body, state)
+        for line in yes {
+            lines = append(lines, line)
+        }
+        lines = append(lines, "jump " + end_label)
+        lines = append(lines, "label " + else_label)
+
+        no = emit_block(stmt.no.body, state)
+        for line in no {
+            lines = append(lines, line)
+        }
+        lines = append(lines, "label " + end_label)
+        return lines
+    }
+
+    if stmt.kind == "while" {
+        start_label = label(state)
+        end_label = label(state)
+        lines = append(lines, "label " + start_label)
+
+        condition = emit_expr(stmt.condition)
+        for line in condition {
+            lines = append(lines, line)
+        }
+        lines = append(lines, "jump_if_false " + end_label)
+
+        body = emit_block(stmt.body.body, state)
+        for line in body {
+            lines = append(lines, line)
+        }
+        lines = append(lines, "jump " + start_label)
+        lines = append(lines, "label " + end_label)
+        return lines
+    }
+
+    return append(lines, "unsupported_stmt " + stmt.kind)
+}
+
+function emit_program(program) {
+    state = state()
+    lines = []
+    for stmt in program.body {
+        part = emit_stmt(stmt, state)
+        for line in part {
+            lines = append(lines, line)
+        }
+    }
+    return lines
+}
+
+function main() {
+    tokens = lex("main.nano")
+    parsed = parse_program(tokens)
+
+    if !parsed.ok {
+        print "parse error: " + parsed.error
+    } else {
+        lines = emit_program(parsed.node)
+        print join(lines, "\n")
+    }
+}
