@@ -419,6 +419,23 @@ impl IrRuntime {
             };
         }
 
+        if name == "backend" {
+            if !args.is_empty() {
+                return Err("Nano: backend() não recebe argumentos".into());
+            }
+            return Ok(Value::Text(self.backend.kind().name().into()));
+        }
+
+        if name == "device" {
+            if args.len() != 1 {
+                return Err("Nano: device() recebe 1 tensor".into());
+            }
+            return match &args[0] {
+                Value::Tensor(tensor) => Ok(Value::Text(tensor.borrow().device.name().into())),
+                _ => Err("Nano: device() requer Tensor".into()),
+            };
+        }
+
         if name == "tensor" {
             if args.len() != 2 {
                 return Err("Nano: tensor() recebe dados e shape".into());
