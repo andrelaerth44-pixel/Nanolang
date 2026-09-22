@@ -51,6 +51,8 @@ jobs:
       - name: NPU provider end to end
         run: |
           cargo build --quiet --bin nano-npu-provider-reference --bin nano
+          echo "=== Nano IR: examples/npu.nano ==="
+          cargo run --quiet --bin nano -- debug examples/npu.nano
           NANO_NPU_PROVIDER="$PWD/target/debug/nano-npu-provider-reference" cargo run --quiet --bin nano -- run --backend npu examples/npu.nano
 
       - name: Native CPU end to end
