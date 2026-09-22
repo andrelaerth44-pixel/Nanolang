@@ -18,6 +18,8 @@ pub(crate) enum IrInst {
     Pop,
     JumpIfFalse(usize),
     Jump(usize),
+    IterInit,
+    IterNext(String, usize),
     Return,
     Use(String),
 }
@@ -32,6 +34,19 @@ pub(crate) struct IrFunction {
 pub(crate) struct IrProgram {
     pub(crate) code: Vec<IrInst>,
     pub(crate) functions: HashMap<String, IrFunction>,
+}
+
+#[derive(Debug, Clone)]
+struct IterState {
+    values: Vec<Value>,
+    index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct AdamState {
+    step: u64,
+    m: Vec<f32>,
+    v: Vec<f32>,
 }
 
 pub(crate) struct Compiler;
@@ -172,6 +187,30 @@ impl Compiler {
                 let end = code.len();
                 code[jump_end] = IrInst::Jump(end);
             }
+            Stmt::While(cond, body) => {
+                let start = code.len();
+                self.compile_expr(cond, code)?;
+                let exit = code.len();
+                code.push(IrInst::JumpIfFalse(usize::MAX));
+                for stmt in body {
+                    self.compile_stmt(stmt, code)?;
+                }
+                code.push(IrInst::Jump(start));
+                let end = code.len();
+                code[exit] = IrInst::JumpIfFalse(end);
+            }
+            Stmt::For(name, iterable, body) => {
+                self.compile_expr(iterable, code)?;
+                code.push(IrInst::IterInit);
+                let check = code.len();
+                code.push(IrInst::IterNext(name.clone(), usize::MAX));
+                for stmt in body {
+                    self.compile_stmt(stmt, code)?;
+                }
+                code.push(IrInst::Jump(check));
+                let end = code.len();
+                code[check] = IrInst::IterNext(name.clone(), end);
+            }
         }
         Ok(())
     }
@@ -222,11 +261,12 @@ impl Compiler {
 pub(crate) struct IrRuntime {
     vars: HashMap<String, Value>,
     functions: HashMap<String, IrFunction>,
+    adam: HashMap<u64, AdamState>,
 }
 
 impl IrRuntime {
     pub(crate) fn new() -> Self {
-        Self { vars: HashMap::new(), functions: HashMap::new() }
+        Self { vars: HashMap::new(), functions: HashMap::new(), adam: HashMap::new() }
     }
 
     pub(crate) fn run(&mut self, program: &IrProgram) -> Result<(), String> {
@@ -237,6 +277,7 @@ impl IrRuntime {
 
     fn execute_code(&mut self, code: &[IrInst]) -> Result<Option<Value>, String> {
         let mut stack: Vec<Value> = Vec::new();
+        let mut iterators: Vec<IterState> = Vec::new();
         let mut ip = 0usize;
 
         while ip < code.len() {
@@ -307,6 +348,35 @@ impl IrRuntime {
                 IrInst::Jump(target) => {
                     ip = *target;
                     continue;
+                }
+                IrInst::IterInit => {
+                    let iterable = stack.pop().ok_or_else(|| "Nano IR: stack vazia em IterInit".to_string())?;
+                    match iterable {
+                        Value::List(values) => iterators.push(IterState { values, index: 0 }),
+                        _ => return Err("Nano: for requer List".into()),
+                    }
+                }
+                IrInst::IterNext(name, target) => {
+                    let item = match iterators.last_mut() {
+                        Some(iter) if iter.index < iter.values.len() => {
+                            let value = iter.values[iter.index].clone();
+                            iter.index += 1;
+                            Some(value)
+                        }
+                        Some(_) => {
+                            iterators.pop();
+                            None
+                        }
+                        None => return Err("Nano IR: IterNext sem IterInit".into()),
+                    };
+
+                    match item {
+                        Some(value) => { self.vars.insert(name.clone(), value); }
+                        None => {
+                            ip = *target;
+                            continue;
+                        }
+                    }
                 }
                 IrInst::Return => {
                     return Ok(Some(stack.pop().unwrap_or(Value::Null)));
@@ -400,6 +470,24 @@ impl IrRuntime {
             return step_value(&args[0], &args[1], &args[2]);
         }
 
+        if name == "adam" {
+            if args.len() != 3 {
+                return Err("Nano: adam() recebe parâmetro, gradiente e taxa".into());
+            }
+            return self.adam_value(&args[0], &args[1], &args[2]);
+        }
+
+        if name == "range" {
+            if args.len() != 1 {
+                return Err("Nano: range() recebe 1 argumento".into());
+            }
+            let limit = match &args[0] {
+                Value::Number(v) if *v >= 0.0 && v.fract() == 0.0 => *v as usize,
+                _ => return Err("Nano: range() requer Number inteiro não negativo".into()),
+            };
+            return Ok(Value::List((0..limit).map(|v| Value::Number(v as f64)).collect()));
+        }
+
         let function = self.functions.get(name).cloned()
             .ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
 
@@ -415,6 +503,57 @@ impl IrRuntime {
         let result = self.execute_code(&function.code)?.unwrap_or(Value::Null);
         self.vars = saved;
         Ok(result)
+    }
+
+    fn adam_value(&mut self, parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value, String> {
+        let param = match parameter {
+            Value::Tensor(t) => std::rc::Rc::clone(t),
+            _ => return Err("Nano: adam() requer parâmetro Tensor".into()),
+        };
+        let grad = match gradient {
+            Value::Tensor(t) => std::rc::Rc::clone(t),
+            _ => return Err("Nano: adam() requer gradiente Tensor".into()),
+        };
+        let lr = match rate {
+            Value::Number(v) => *v as f32,
+            _ => return Err("Nano: adam() requer taxa Number".into()),
+        };
+
+        let (id, shape, pdata, gdata) = {
+            let p = param.borrow();
+            let g = grad.borrow();
+            if p.shape != g.shape {
+                return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
+            }
+            (p.id, p.shape.clone(), p.data.clone(), g.data.clone())
+        };
+
+        let state = self.adam.entry(id).or_insert_with(|| AdamState {
+            step: 0,
+            m: vec![0.0; pdata.len()],
+            v: vec![0.0; pdata.len()],
+        });
+
+        if state.m.len() != pdata.len() || state.v.len() != pdata.len() {
+            return Err("Nano: estado Adam incompatível com o parâmetro".into());
+        }
+
+        state.step += 1;
+        let t = state.step as f32;
+        let beta1 = 0.9_f32;
+        let beta2 = 0.999_f32;
+        let eps = 1e-8_f32;
+
+        let mut p = param.borrow_mut();
+        for i in 0..p.data.len() {
+            state.m[i] = beta1 * state.m[i] + (1.0 - beta1) * gdata[i];
+            state.v[i] = beta2 * state.v[i] + (1.0 - beta2) * gdata[i] * gdata[i];
+            let m_hat = state.m[i] / (1.0 - beta1.powf(t));
+            let v_hat = state.v[i] / (1.0 - beta2.powf(t));
+            p.data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
+        }
+
+        Ok(Value::Tensor(param))
     }
 
     fn binary_value(&mut self, a: Value, op: Op, b: Value) -> Result<Value, String> {
@@ -542,16 +681,10 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
         _ => return Err("Nano: matmul() requer Tensor, Tensor".into()),
     };
 
-    let (ldata, lshape, rdata, rshape, requires_grad) = {
+    let (lshape, rshape, requires_grad) = {
         let l = left.borrow();
         let r = right.borrow();
-        (
-            l.data.clone(),
-            l.shape.clone(),
-            r.data.clone(),
-            r.shape.clone(),
-            l.requires_grad || r.requires_grad,
-        )
+        (l.shape.clone(), r.shape.clone(), l.requires_grad || r.requires_grad)
     };
 
     if lshape.len() != 2 || rshape.len() != 2 {
@@ -565,13 +698,17 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
     }
 
     let mut out = vec![0.0_f32; m * n];
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0.0_f32;
-            for x in 0..k {
-                sum += ldata[i * k + x] * rdata[x * n + j];
+    {
+        let l = left.borrow();
+        let r = right.borrow();
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0.0_f32;
+                for x in 0..k {
+                    sum += l.data[i * k + x] * r.data[x * n + j];
+                }
+                out[i * n + j] = sum;
             }
-            out[i * n + j] = sum;
         }
     }
 
@@ -659,16 +796,17 @@ fn step_value(parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value
         _ => return Err("Nano: step() requer taxa Number".into()),
     };
 
-    let p = param.borrow();
+    let mut p = param.borrow_mut();
     let g = grad.borrow();
     if p.shape != g.shape {
         return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
     }
-    let data = p.data.iter().zip(&g.data).map(|(x, y)| x - lr * y).collect::<Vec<_>>();
-    let shape = p.shape.clone();
+    for (value, delta) in p.data.iter_mut().zip(&g.data) {
+        *value -= lr * delta;
+    }
     drop(g);
     drop(p);
-    Ok(Value::Tensor(super::Tensor::new(data, shape, true)?))
+    Ok(Value::Tensor(param))
 }
 
 fn backward(
