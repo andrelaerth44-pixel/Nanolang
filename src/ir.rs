@@ -523,15 +523,16 @@ impl Compiler {
                 code.push(IrInst::Unary(*op));
             }
             Expr::Call(target, args) => {
-                if let Expr::Var(name) = target.as_ref() {
-                    if self.known_functions.contains(name) {
+                if let Some(name) = qualified_name(target) {
+                    if self.known_functions.contains(&name) || is_builtin_name(&name) {
                         for arg in args {
                             self.compile_expr(arg, code)?;
                         }
-                        code.push(IrInst::Call(name.clone(), args.len()));
+                        code.push(IrInst::Call(name, args.len()));
                         return Ok(());
                     }
                 }
+
                 self.compile_expr(target, code)?;
                 for arg in args {
                     self.compile_expr(arg, code)?;
@@ -1793,6 +1794,41 @@ fn text_list_arg(value: &Value, label: &str) -> Result<Vec<String>, String> {
         Value::List(items) => items.iter().map(|item| text_arg(item, label)).collect(),
         _ => Err(format!("Nano: {label} requer List de Text")),
     }
+}
+
+fn is_builtin_name(name: &str) -> bool {
+    matches!(name,
+        "print" | "assert" | "ok" | "err" | "is_ok" | "unwrap" | "error"
+        | "len" | "range" | "to_text" | "to_number" | "upper" | "lower" | "trim"
+        | "contains" | "starts_with" | "ends_with" | "replace" | "substring" | "char_at"
+        | "split" | "join" | "append"
+        | "abs" | "sqrt" | "floor" | "ceil" | "round" | "sin" | "cos" | "tan" | "exp"
+        | "log" | "pow" | "min" | "max"
+        | "tensor" | "parameter" | "zeros" | "shape" | "matmul" | "sum" | "mean" | "grad"
+        | "step" | "adam" | "cast" | "dtype" | "device" | "memory_bytes" | "backend"
+        | "fs_read_text" | "fs_write_text" | "fs_append_text" | "fs_exists" | "fs_list"
+        | "fs_mkdir" | "fs_remove"
+        | "env_get" | "env_set" | "process_spawn" | "process_wait"
+        | "time_now_ms" | "time_sleep_ms" | "thread_sleep_ms" | "thread_spawn" | "thread_join"
+        | "task_spawn" | "task_join"
+        | "channel" | "send" | "recv" | "close_channel"
+        | "net_tcp_connect" | "net_tcp_listen" | "net_tcp_accept" | "net_tcp_send"
+        | "net_tcp_recv" | "net_tcp_close" | "net_http_get"
+        | "ui_window" | "ui_set_title" | "ui_close" | "ui_poll_event"
+        | "std.fs.read_text" | "std.fs.write_text" | "std.fs.append_text" | "std.fs.exists"
+        | "std.fs.list" | "std.fs.mkdir" | "std.fs.remove"
+        | "std.process.spawn" | "std.process.wait"
+        | "std.time.now_ms" | "std.time.sleep_ms"
+        | "std.net.tcp_connect" | "std.net.tcp_listen" | "std.net.tcp_accept"
+        | "std.net.tcp_send" | "std.net.tcp_recv" | "std.net.tcp_close"
+        | "std.net.http_get" | "std.http.get"
+        | "std.env.get" | "std.env.set"
+        | "std.math.abs" | "std.math.sqrt" | "std.math.floor" | "std.math.ceil" | "std.math.round"
+        | "std.math.sin" | "std.math.cos" | "std.math.tan" | "std.math.exp" | "std.math.log"
+        | "std.math.pow" | "std.math.min" | "std.math.max"
+        | "std.ui.window" | "std.ui.set_title" | "std.ui.close" | "std.ui.poll_event"
+        | "std.async.channel" | "std.async.send" | "std.async.recv" | "std.async.close_channel"
+    )
 }
 
 fn pop_n(stack: &mut Vec<Value>, count: usize) -> Result<Vec<Value>, String> {
