@@ -104,7 +104,7 @@ mod tests {
     fn hmac_sha256_known_vector() {
         assert_eq!(
             hmac_sha256_hex(b"key", b"The quick brown fox jumps over the lazy dog"),
-            "f7bc83f430538424b13298e6aa6cb2b8f617f2f7e4f8a0d7b6f5b8d6a8f4f5f8"
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
         );
     }
 }
