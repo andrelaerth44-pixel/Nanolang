@@ -996,9 +996,21 @@ impl Semantic {
                     _ => Err(format!("Nano: indexação requer List, Object ou Tensor, recebido {}", target_type.name())),
                 }
             }
-            Expr::Call(name, args) => {
+            Expr::Call(target, args) => {
+                let target_type = self.expr_type(target)?;
                 for arg in args { self.expr_type(arg)?; }
-                let name = match name.as_str() {
+
+                let raw_name = match qualified_name(target) {
+                    Some(name) => name,
+                    None => {
+                        if target_type == Type::Function || target_type == Type::Any {
+                            return Ok(Type::Any);
+                        }
+                        return Err(format!("Nano: alvo de chamada deve ser Function, recebido {}", target_type.name()));
+                    }
+                };
+
+                let name = match raw_name.as_str() {
                     "std.fs.read_text" => "fs_read_text",
                     "std.fs.write_text" => "fs_write_text",
                     "std.fs.append_text" => "fs_append_text",
