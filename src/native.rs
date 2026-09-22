@@ -323,7 +323,24 @@ impl NativeModule {
                     let temp_left = stack_offset(max_stack);
                     let temp_result = stack_offset(max_stack + 1);
 
-                    if *op == Op::Add && left_kind == Kind::Text && right_kind == Kind::Text {
+                    if left_kind == Kind::Any || right_kind == Kind::Any {
+                        self.box_value(left, left_kind)?;
+                        self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n",
+                            temp_left
+                        ));
+                        self.box_value(right, right_kind)?;
+                        self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n",
+                            temp_result
+                        ));
+                        self.text.push_str(&format!(
+                            "    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    movl ${op_code}, %edx\n    call nano_any_binary@PLT\n    movq %rax, {}(%rbp)\n",
+                            temp_left,
+                            temp_result,
+                            stack_offset(left)
+                        ));
+                    } else if *op == Op::Add && left_kind == Kind::Text && right_kind == Kind::Text {
                         self.text.push_str(&format!(
                             "    movq {}(%rbp), %rdi\n    call strlen@PLT\n    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    call strlen@PLT\n    addq {}(%rbp), %rax\n    addq $1, %rax\n    movq %rax, %rdi\n    call malloc@PLT\n    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcpy@PLT\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcat@PLT\n    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
                             stack_offset(left),
@@ -1083,6 +1100,24 @@ fn scalar_math_symbol(name: &str) -> Option<&'static str> {
         "min" | "std.math.min" => Some("fmin"),
         "max" | "std.math.max" => Some("fmax"),
         _ => None,
+    }
+}
+
+fn op_code(op: Op) -> u32 {
+    match op {
+        Op::Add => 0,
+        Op::Sub => 1,
+        Op::Mul => 2,
+        Op::Div => 3,
+        Op::Mod => 4,
+        Op::Eq => 5,
+        Op::Ne => 6,
+        Op::Gt => 7,
+        Op::Ge => 8,
+        Op::Lt => 9,
+        Op::Le => 10,
+        Op::And => 11,
+        Op::Or => 12,
     }
 }
 
