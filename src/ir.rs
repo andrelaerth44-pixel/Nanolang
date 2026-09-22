@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 
-use super::{Expr, Lexer, Op, Parser, Semantic, Stmt, Value};
+use super::{Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
 
 #[derive(Debug, Clone)]
 pub(crate) enum IrInst {
@@ -254,7 +254,7 @@ impl IrRuntime {
                 IrInst::Binary(op) => {
                     let right = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando direito".to_string())?;
                     let left = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando esquerdo".to_string())?;
-                    stack.push(binary(left, *op, right)?);
+                    stack.push(self.binary_value(left, *op, right)?);
                 }
                 IrInst::MakeList(count) => {
                     let mut values = pop_n(&mut stack, *count)?;
@@ -339,7 +339,16 @@ impl IrRuntime {
             }
             let data = list_numbers(&args[0], "dados")?;
             let shape = list_shape(&args[1])?;
-            return Ok(Value::Tensor(super::Tensor::new(data, shape)?));
+            return Ok(Value::Tensor(super::Tensor::new(data, shape, false)?));
+        }
+
+        if name == "parameter" {
+            if args.len() != 2 {
+                return Err("Nano: parameter() recebe dados e shape".into());
+            }
+            let data = list_numbers(&args[0], "dados")?;
+            let shape = list_shape(&args[1])?;
+            return Ok(Value::Tensor(super::Tensor::new(data, shape, true)?));
         }
 
         if name == "zeros" {
@@ -348,7 +357,7 @@ impl IrRuntime {
             }
             let shape = list_shape(&args[0])?;
             let size = shape.iter().copied().product::<usize>();
-            return Ok(Value::Tensor(super::Tensor::new(vec![0.0; size], shape)?));
+            return Ok(Value::Tensor(super::Tensor::new(vec![0.0; size], shape, false)?));
         }
 
         if name == "shape" {
@@ -370,6 +379,27 @@ impl IrRuntime {
             return matmul_values(&args[0], &args[1]);
         }
 
+        if name == "sum" || name == "mean" {
+            if args.len() != 1 {
+                return Err(format!("Nano: {name}() recebe 1 tensor"));
+            }
+            return reduce_value(&args[0], name == "mean");
+        }
+
+        if name == "grad" {
+            if args.len() != 2 {
+                return Err("Nano: grad() recebe loss e parâmetro".into());
+            }
+            return gradient_value(&args[0], &args[1]);
+        }
+
+        if name == "step" {
+            if args.len() != 3 {
+                return Err("Nano: step() recebe parâmetro, gradiente e taxa".into());
+            }
+            return step_value(&args[0], &args[1], &args[2]);
+        }
+
         let function = self.functions.get(name).cloned()
             .ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
 
@@ -385,6 +415,27 @@ impl IrRuntime {
         let result = self.execute_code(&function.code)?.unwrap_or(Value::Null);
         self.vars = saved;
         Ok(result)
+    }
+
+    fn binary_value(&mut self, a: Value, op: Op, b: Value) -> Result<Value, String> {
+        match (&a, &b, op) {
+            (Value::Tensor(left), Value::Tensor(right), Op::Add | Op::Sub | Op::Mul | Op::Div) => {
+                let kind = match op {
+                    Op::Add => TensorOpKind::Add,
+                    Op::Sub => TensorOpKind::Sub,
+                    Op::Mul => TensorOpKind::Mul,
+                    Op::Div => TensorOpKind::Div,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Tensor(tensor_elementwise(left, right, kind)?))
+            }
+            (Value::Tensor(tensor), Value::Number(n), Op::Mul) |
+            (Value::Number(n), Value::Tensor(tensor), Op::Mul) => {
+                let scalar = super::Tensor::new(vec![*n as f32; tensor.borrow().data.len()], tensor.borrow().shape.clone(), false)?;
+                Ok(Value::Tensor(tensor_elementwise(tensor, &scalar, TensorOpKind::Mul)?))
+            }
+            _ => binary(a, op, b),
+        }
     }
 
     fn load_module(&mut self, path: &str) -> Result<(), String> {
@@ -512,5 +563,212 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
         }
     }
 
-    Ok(Value::Tensor(super::Tensor::new(out, vec![m, n])?))
+    let requires_grad = left.borrow().requires_grad || right.borrow().requires_grad;
+    let left_ref = std::rc::Rc::clone(match a {
+        Value::Tensor(t) => t,
+        _ => unreachable!(),
+    });
+    let right_ref = std::rc::Rc::clone(match b {
+        Value::Tensor(t) => t,
+        _ => unreachable!(),
+    });
+    Ok(Value::Tensor(super::Tensor::derived(
+        out,
+        vec![m, n],
+        requires_grad,
+        TensorOp::Matmul(left_ref, right_ref),
+    )?))
+}
+
+
+fn tensor_elementwise(a: &TensorRef, b: &TensorRef, op: TensorOpKind) -> Result<TensorRef, String> {
+    let left = a.borrow();
+    let right = b.borrow();
+    if left.shape != right.shape {
+        return Err("Nano: Tensor elementwise requer shapes iguais".into());
+    }
+
+    let data = left.data.iter().zip(&right.data).map(|(x, y)| match op {
+        TensorOpKind::Add => x + y,
+        TensorOpKind::Sub => x - y,
+        TensorOpKind::Mul => x * y,
+        TensorOpKind::Div => x / y,
+    }).collect::<Vec<_>>();
+
+    let requires_grad = left.requires_grad || right.requires_grad;
+    drop(left);
+    drop(right);
+
+    Ok(super::Tensor::derived(
+        data,
+        a.borrow().shape.clone(),
+        requires_grad,
+        TensorOp::Elementwise(op, std::rc::Rc::clone(a), std::rc::Rc::clone(b)),
+    )?)
+}
+
+fn reduce_value(value: &Value, mean: bool) -> Result<Value, String> {
+    let tensor = match value {
+        Value::Tensor(t) => std::rc::Rc::clone(t),
+        _ => return Err("Nano: redução requer Tensor".into()),
+    };
+    let borrowed = tensor.borrow();
+    let count = borrowed.data.len();
+    let sum = borrowed.data.iter().copied().sum::<f32>();
+    let result = if mean { sum / count.max(1) as f32 } else { sum };
+    let op = if mean { TensorOp::Mean(std::rc::Rc::clone(&tensor)) } else { TensorOp::Sum(std::rc::Rc::clone(&tensor)) };
+    let requires_grad = borrowed.requires_grad;
+    drop(borrowed);
+    Ok(Value::Tensor(super::Tensor::derived(vec![result], vec![1], requires_grad, op)?))
+}
+
+fn gradient_value(loss: &Value, parameter: &Value) -> Result<Value, String> {
+    let loss_ref = match loss {
+        Value::Tensor(t) => std::rc::Rc::clone(t),
+        _ => return Err("Nano: grad() requer Tensor como loss".into()),
+    };
+    let param_ref = match parameter {
+        Value::Tensor(t) => std::rc::Rc::clone(t),
+        _ => return Err("Nano: grad() requer Tensor como parâmetro".into()),
+    };
+
+    let output_shape = param_ref.borrow().shape.clone();
+    let mut grads: HashMap<u64, Vec<f32>> = HashMap::new();
+    let upstream = vec![1.0_f32; loss_ref.borrow().data.len()];
+    backward(&loss_ref, upstream, &mut grads)?;
+
+    let id = param_ref.borrow().id;
+    let data = grads.get(&id).cloned().unwrap_or_else(|| vec![0.0; param_ref.borrow().data.len()]);
+    Ok(Value::Tensor(super::Tensor::new(data, output_shape, false)?))
+}
+
+fn step_value(parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value, String> {
+    let param = match parameter {
+        Value::Tensor(t) => std::rc::Rc::clone(t),
+        _ => return Err("Nano: step() requer parâmetro Tensor".into()),
+    };
+    let grad = match gradient {
+        Value::Tensor(t) => std::rc::Rc::clone(t),
+        _ => return Err("Nano: step() requer gradiente Tensor".into()),
+    };
+    let lr = match rate {
+        Value::Number(v) => *v as f32,
+        _ => return Err("Nano: step() requer taxa Number".into()),
+    };
+
+    let p = param.borrow();
+    let g = grad.borrow();
+    if p.shape != g.shape {
+        return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
+    }
+    let data = p.data.iter().zip(&g.data).map(|(x, y)| x - lr * y).collect::<Vec<_>>();
+    let shape = p.shape.clone();
+    drop(g);
+    drop(p);
+    Ok(Value::Tensor(super::Tensor::new(data, shape, true)?))
+}
+
+fn backward(
+    node: &TensorRef,
+    upstream: Vec<f32>,
+    grads: &mut HashMap<u64, Vec<f32>>,
+) -> Result<(), String> {
+    let (id, op) = {
+        let value = node.borrow();
+        (value.id, value.op.clone())
+    };
+
+    let entry = grads.entry(id).or_insert_with(|| vec![0.0; upstream.len()]);
+    for (slot, value) in entry.iter_mut().zip(upstream.iter()) {
+        *slot += *value;
+    }
+
+    match op {
+        TensorOp::Leaf => Ok(()),
+        TensorOp::Elementwise(kind, left, right) => {
+            let (ldata, rdata) = {
+                let l = left.borrow();
+                let r = right.borrow();
+                (l.data.clone(), r.data.clone())
+            };
+            match kind {
+                TensorOpKind::Add => {
+                    backward(&left, upstream.clone(), grads)?;
+                    backward(&right, upstream, grads)?;
+                }
+                TensorOpKind::Sub => {
+                    backward(&left, upstream.clone(), grads)?;
+                    backward(&right, upstream.into_iter().map(|v| -v).collect(), grads)?;
+                }
+                TensorOpKind::Mul => {
+                    let lg = upstream.iter().zip(&rdata).map(|(u, r)| u * r).collect();
+                    let rg = upstream.iter().zip(&ldata).map(|(u, l)| u * l).collect();
+                    backward(&left, lg, grads)?;
+                    backward(&right, rg, grads)?;
+                }
+                TensorOpKind::Div => {
+                    let lg = upstream.iter().zip(&rdata).map(|(u, r)| u / r).collect();
+                    let rg = upstream.iter().zip(&ldata).zip(&rdata).map(|((u, l), r)| -u * l / (r * r)).collect();
+                    backward(&left, lg, grads)?;
+                    backward(&right, rg, grads)?;
+                }
+            }
+            Ok(())
+        }
+        TensorOp::Sum(input) => {
+            let scalar = upstream.first().copied().unwrap_or(0.0);
+            let size = input.borrow().data.len();
+            backward(&input, vec![scalar; size], grads)
+        }
+        TensorOp::Mean(input) => {
+            let scalar = upstream.first().copied().unwrap_or(0.0);
+            let size = input.borrow().data.len().max(1);
+            backward(&input, vec![scalar / size as f32; size], grads)
+        }
+        TensorOp::Matmul(left, right) => {
+            let upstream_shape = node.borrow().shape.clone();
+            if upstream_shape.len() != 2 {
+                return Err("Nano: grad matmul requer saída 2D".into());
+            }
+            let (m, n) = (upstream_shape[0], upstream_shape[1]);
+            let (ldata, lshape, rdata, rshape) = {
+                let l = left.borrow();
+                let r = right.borrow();
+                (l.data.clone(), l.shape.clone(), r.data.clone(), r.shape.clone())
+            };
+            if lshape.len() != 2 || rshape.len() != 2 {
+                return Err("Nano: grad matmul requer entradas 2D".into());
+            }
+            let k = lshape[1];
+            if lshape[0] != m || rshape[1] != n || rshape[0] != k {
+                return Err("Nano: shapes incompatíveis no grad matmul".into());
+            }
+
+            let mut lg = vec![0.0_f32; m * k];
+            for i in 0..m {
+                for x in 0..k {
+                    let mut sum = 0.0;
+                    for j in 0..n {
+                        sum += upstream[i * n + j] * rdata[x * n + j];
+                    }
+                    lg[i * k + x] = sum;
+                }
+            }
+
+            let mut rg = vec![0.0_f32; k * n];
+            for x in 0..k {
+                for j in 0..n {
+                    let mut sum = 0.0;
+                    for i in 0..m {
+                        sum += ldata[i * k + x] * upstream[i * n + j];
+                    }
+                    rg[x * n + j] = sum;
+                }
+            }
+
+            backward(&left, lg, grads)?;
+            backward(&right, rg, grads)?;
+            Ok(())
+        }
+    }
 }
