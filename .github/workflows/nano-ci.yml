@@ -63,6 +63,13 @@ jobs:
           diff -u /tmp/nano-native.expected /tmp/nano-native.out
           test "$native_status" -eq 0
 
+      - name: Native text values
+        run: |
+          cargo run --quiet --bin nano -- build --native examples/native_text.nano -o /tmp/nano-native-text
+          /tmp/nano-native-text > /tmp/nano-native-text.out
+          printf 'native-text\nnative-return\n' > /tmp/nano-native-text.expected
+          diff -u /tmp/nano-native-text.expected /tmp/nano-native-text.out
+
       - name: Native first-class function values
         run: |
           cargo run --quiet --bin nano -- build --native examples/function_values.nano -o /tmp/nano-function-values
