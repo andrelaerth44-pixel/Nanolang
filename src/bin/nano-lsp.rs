@@ -241,6 +241,11 @@ fn completion(server: &Server, request: &Value) -> Value {
         ("ui_set_title", 3, "altera o título da janela"),
         ("ui_close", 3, "fecha uma janela"),
         ("ui_poll_event", 3, "obtém o próximo evento de UI"),
+        ("assert", 3, "falha o programa quando a condição é falsa"),
+        ("channel", 3, "cria um canal de comunicação"),
+        ("send", 3, "envia um valor para um canal"),
+        ("recv", 3, "recebe um valor de um canal"),
+        ("close_channel", 3, "fecha um canal"),
     ];
 
     let mut items = Vec::new();
