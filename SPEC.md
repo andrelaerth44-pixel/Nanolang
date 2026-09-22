@@ -1,4 +1,4 @@
-# Nano 0.3 — Especificação inicial
+# Nano 0.4 — Especificação inicial
 
 ## 1. Arquivos
 
@@ -57,6 +57,8 @@ name = "André"
 age = 25
 active = true
 ```
+
+Os tipos são inferidos automaticamente. Não é necessário escrever o tipo da variável.
 
 ### Impressão
 
@@ -166,20 +168,75 @@ print double(21)
 
 A forma inicial é deliberadamente simples. Sistema de módulos com nomes, pacotes e namespaces será adicionado depois sem quebrar esta sintaxe básica.
 
-## 5. Tipos
+## 6. Tipos e inferência
 
-Nano 0.1 começa com:
+Nano 0.4 mantém os tipos fora da sintaxe do dia a dia.
+
+Tipos-base atuais:
 
 - Number
 - Text
 - Boolean
+- List
+- Object
 - Null
+- Any interno
 
-A linguagem favorece inferência automática.
+Exemplo:
+
+```nano
+name = "André"
+age = 25
+active = true
+numbers = [10, 20, 30]
+```
+
+O compilador/runtime infere automaticamente:
+
+```
+name    -> Text
+age     -> Number
+active  -> Boolean
+numbers -> List
+```
+
+Não é necessário escrever:
+
+```
+Text name
+Number age
+Boolean active
+```
+
+### Verificação antecipada
+
+Antes do runtime executar o programa, o compilador faz uma verificação semântica simples.
+
+Por exemplo, isto é rejeitado:
+
+```nano
+age = 25
+age = "vinte e cinco"
+```
+
+Erro esperado:
+
+```
+Nano: tipo incompatível em variável 'age': Number e Text
+```
+
+Operações também são verificadas quando o tipo já é conhecido:
+
+```nano
+total = 10 + 5
+message = "idade: " + total
+```
+
+Funções e módulos que ainda não permitem descobrir um tipo com segurança usam `Any` internamente. Isso mantém a sintaxe pequena e evita exigir anotações de tipo.
 
 ## 7. Execução
 
-Nano 0.1 possui um runtime próprio.
+Nano 0.4 possui um runtime próprio e uma camada de verificação semântica.
 
 O programa Nano não precisa ser convertido para Python, Kotlin, Java, JavaScript ou outra linguagem.
 
@@ -192,7 +249,7 @@ Lexer
     ↓
 Parser
     ↓
-AST
+Semantic Types / AST
     ↓
 Nano IR
     ├── Runtime Nano
@@ -200,6 +257,8 @@ Nano IR
     ├── Native GPU
     └── Native NPU
 ```
+
+A camada de tipos é uma etapa do compilador; ela não adiciona sintaxe obrigatória ao programador.
 
 ## 8. Self-host
 
