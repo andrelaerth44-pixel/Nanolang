@@ -9,7 +9,7 @@ mod ir;
 mod native;
 mod npu;
 
-use std::{cell::RefCell, env, fs, path::Path, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
+use std::{cell::RefCell, env, fs, io::{self, BufRead, Write}, path::{Path, PathBuf}, process::{self, Stdio}, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
 use dtype::DType;
 use half::{bf16, f16};
@@ -1511,6 +1511,11 @@ enum CliCommand {
     Check,
     Lint,
     Test,
+    Fmt,
+    Lsp,
+    Repl,
+    Debug,
+    New,
     PackageInit,
     PackageLock,
     PackageVerify,
@@ -1525,6 +1530,11 @@ fn parse_cli(
         Some("check") => CliCommand::Check,
         Some("lint") => CliCommand::Lint,
         Some("test") => CliCommand::Test,
+        Some("fmt") => CliCommand::Fmt,
+        Some("lsp") => CliCommand::Lsp,
+        Some("repl") => CliCommand::Repl,
+        Some("debug") => CliCommand::Debug,
+        Some("new") => CliCommand::New,
         Some("build") => CliCommand::BuildNative,
         Some("package") => match args.get(2).map(String::as_str) {
             Some("init") => CliCommand::PackageInit,
@@ -1532,7 +1542,7 @@ fn parse_cli(
             Some("verify") => CliCommand::PackageVerify,
             _ => return Err("uso: nano package init|lock|verify [diretório]".into()),
         },
-        _ => return Err("uso: nano run|check|lint|test|package init|lock|verify|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo]".into()),
+        _ => return Err("uso: nano run|check|lint|test|fmt|lsp|repl|debug|new|package init|lock|verify|build [opções] [arquivo]".into()),
     };
 
     let mut path = None;
@@ -1619,19 +1629,203 @@ fn parse_cli(
     Ok((
         command,
         path.unwrap_or_else(|| {
-            if matches!(
-                command,
-                CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify
-            ) {
-                ".".into()
-            } else {
-                "main.nano".into()
+            match command {
+                CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify => ".".into(),
+                CliCommand::New => "nano-project".into(),
+                CliCommand::Repl | CliCommand::Lsp => String::new(),
+                _ => "main.nano".into(),
             }
         }),
         selected_backend,
         selected_dtype,
         output,
     ))
+}
+
+fn run_sibling_tool(tool: &str, args: &[String]) -> Result<(), String> {
+    let sibling = env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.join(tool)));
+    let program = sibling.filter(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from(tool));
+
+    let status = process::Command::new(&program)
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|e| format!("Nano: não foi possível executar '{}': {e}", program.display()))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("Nano: '{}' terminou com código {:?}", program.display(), status.code()))
+    }
+}
+
+fn scan_repl_braces(source: &str) -> isize {
+    let mut depth = 0isize;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for line in source.lines() {
+        for ch in line.chars() {
+            if in_string {
+                if escape {
+                    escape = false;
+                } else if ch == '\' {
+                    escape = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            if ch == '"' {
+                in_string = true;
+                continue;
+            }
+            if ch == '#' {
+                break;
+            }
+            match ch {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+
+    depth
+}
+
+fn run_repl() -> Result<(), String> {
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    let mut output = io::stdout();
+    let mut runtime = ir::IrRuntime::new();
+    let mut known_functions: Vec<Stmt> = Vec::new();
+    let mut buffer = String::new();
+
+    println!("Nano REPL 0.9 — .help para ajuda, .exit para sair");
+
+    loop {
+        if buffer.is_empty() {
+            print!("nano> ");
+        } else {
+            print!("....> ");
+        }
+        output.flush().map_err(|e| format!("Nano REPL: {e}"))?;
+
+        let mut line = String::new();
+        if input.read_line(&mut line).map_err(|e| format!("Nano REPL: {e}"))? == 0 {
+            break;
+        }
+
+        let command = line.trim();
+        if buffer.is_empty() {
+            match command {
+                ".exit" | ".quit" => break,
+                ".help" => {
+                    println!(".help  mostra esta ajuda");
+                    println!(".exit  sai do REPL");
+                    println!(".clear limpa o bloco pendente");
+                    continue;
+                }
+                ".clear" => {
+                    buffer.clear();
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        buffer.push_str(&line);
+        if scan_repl_braces(&buffer) > 0 {
+            continue;
+        }
+
+        if scan_repl_braces(&buffer) < 0 {
+            eprintln!("Nano REPL: chaves desbalanceadas");
+            buffer.clear();
+            continue;
+        }
+
+        let tokens = match Lexer::new(&buffer).lex() {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                eprintln!("{e}");
+                buffer.clear();
+                continue;
+            }
+        };
+        let parsed = match Parser::new(tokens).program() {
+            Ok(program) => program,
+            Err(e) => {
+                eprintln!("{e}");
+                buffer.clear();
+                continue;
+            }
+        };
+
+        let mut combined = known_functions.clone();
+        combined.extend(parsed.clone());
+
+        let mut semantic = Semantic::new();
+        if let Err(e) = semantic.check(&combined) {
+            eprintln!("{e}");
+            buffer.clear();
+            continue;
+        }
+
+        let mut compiler = ir::Compiler::new();
+        let ir_program = match compiler.compile(&combined) {
+            Ok(program) => program,
+            Err(e) => {
+                eprintln!("{e}");
+                buffer.clear();
+                continue;
+            }
+        };
+
+        let mut optimizer = ir::Optimizer::new();
+        let ir_program = optimizer.optimize_program(ir_program);
+
+        if parsed.iter().any(|stmt| matches!(stmt, Stmt::Function(_, _, _))) {
+            for stmt in &parsed {
+                if matches!(stmt, Stmt::Function(_, _, _)) {
+                    known_functions.retain(|existing| {
+                        let Stmt::Function(existing_name, _, _) = existing else { return true; };
+                        let Stmt::Function(new_name, _, _) = stmt else { return true; };
+                        existing_name != new_name
+                    });
+                    known_functions.push(stmt.clone());
+                }
+            }
+        }
+
+        if let Err(e) = runtime.run(&ir_program) {
+            eprintln!("{e}");
+        }
+
+        buffer.clear();
+    }
+
+    Ok(())
+}
+
+fn print_debug_ir(program: &ir::IrProgram) {
+    println!("=== Nano IR ===");
+    for (index, inst) in program.code.iter().enumerate() {
+        println!("{index:04}  {inst:?}");
+    }
+    for (name, function) in &program.functions {
+        println!("
+=== function {name}({}) ===", function.params.join(", "));
+        for (index, inst) in function.code.iter().enumerate() {
+            println!("{index:04}  {inst:?}");
+        }
+    }
 }
 
 fn run_tests(path: &str) -> Result<(), String> {
