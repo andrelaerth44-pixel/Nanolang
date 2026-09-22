@@ -317,6 +317,7 @@ fn completion(server: &Server, request: &Value) -> Value {
         ("ui_set_title", 3, "título"),
         ("ui_close", 3, "fecha janela"),
         ("ui_poll_event", 3, "evento da UI"),
+        ("ui_wait_event", 3, "aguarda evento da UI"),
     ];
 
     for (label, kind, detail) in words {
