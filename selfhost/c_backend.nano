@@ -323,7 +323,7 @@ function parse_functions(lines) {
 }
 
 function emit_function(fn_item) {
-    code = function.code
+    code = fn_item.code
     labels = label_targets(code)
     lines = [
         "static NanoValue *nano_fn_" + symbol(fn_item.name) + "(NanoValue **args, int argc) {",
