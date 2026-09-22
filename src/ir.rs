@@ -620,8 +620,8 @@ impl IrRuntime {
 
         if program.code.is_empty() {
             if let Some(main) = self.functions.get("main").cloned() {
-                for (param, value) in main.params.iter().zip(std::iter::repeat(Value::Null)) {
-                    self.vars.insert(param.clone(), value);
+                if !main.params.is_empty() {
+                    return Err("Nano: função main() não pode receber parâmetros no entrypoint".into());
                 }
                 let _ = self.execute_code(&main.code)?;
             }
