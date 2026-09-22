@@ -477,7 +477,11 @@ impl NativeModule {
                             }
                         }
                     }
-                    self.text.push_str(&format!("    call nano_fn_{}\n", sanitize(callee)));
+                    if let Some(symbol) = scalar_math_symbol(callee) {
+                        self.text.push_str(&format!("    call {symbol}@PLT\n"));
+                    } else {
+                        self.text.push_str(&format!("    call nano_fn_{}\n", sanitize(callee)));
+                    }
                     match function_returns.get(callee).copied().unwrap_or(Kind::Number) {
                         Kind::Function => self.text.push_str(&format!(
                             "    movq %rax, {}(%rbp)\n",
@@ -947,6 +951,25 @@ fn analyze_stack(
     }
 
     Ok((states, max_stack, local_kinds, return_kind, calls))
+}
+
+fn scalar_math_symbol(name: &str) -> Option<&'static str> {
+    match name {
+        "abs" | "std.math.abs" => Some("fabs"),
+        "sqrt" | "std.math.sqrt" => Some("sqrt"),
+        "floor" | "std.math.floor" => Some("floor"),
+        "ceil" | "std.math.ceil" => Some("ceil"),
+        "round" | "std.math.round" => Some("round"),
+        "sin" | "std.math.sin" => Some("sin"),
+        "cos" | "std.math.cos" => Some("cos"),
+        "tan" | "std.math.tan" => Some("tan"),
+        "exp" | "std.math.exp" => Some("exp"),
+        "log" | "std.math.log" => Some("log"),
+        "pow" | "std.math.pow" => Some("pow"),
+        "min" | "std.math.min" => Some("fmin"),
+        "max" | "std.math.max" => Some("fmax"),
+        _ => None,
+    }
 }
 
 fn merge_kind(previous: Kind, next: Kind) -> Result<Kind, ()> {
