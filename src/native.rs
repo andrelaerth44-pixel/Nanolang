@@ -368,7 +368,7 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match kind {
-                        Kind::Function => self.text.push_str(&format!(
+                        Kind::Function | Kind::Text => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n",
                             stack_offset(slot)
                         )),
