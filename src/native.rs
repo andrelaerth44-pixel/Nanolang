@@ -807,7 +807,7 @@ fn analyze_stack(
             }
             IrInst::Store(var) => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Function | Kind::Text | Kind::Null) {
+                if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Function | Kind::Text | Kind::Null | Kind::Any) {
                     return Err(format!("Nano native: variável '{var}' tem um tipo que o backend não suporta"));
                 }
                 match local_kinds.get(var).copied() {
@@ -824,47 +824,51 @@ fn analyze_stack(
             IrInst::Binary(op) => {
                 let right = next.pop().ok_or_else(|| format!("Nano native: binary sem direito em '{name}'"))?;
                 let left = next.pop().ok_or_else(|| format!("Nano native: binary sem esquerdo em '{name}'"))?;
-                match op {
-                    Op::Eq | Op::Ne => {
-                        if left == Kind::Unknown || right == Kind::Unknown {
-                            next.push(Kind::Boolean);
-                        } else if left != right || !matches!(left, Kind::Number | Kind::Boolean | Kind::Text | Kind::Null) {
-                            return Err(format!("Nano native: comparação {:?} exige valores compatíveis", op));
-                        } else {
-                            next.push(Kind::Boolean);
-                        }
-                    }
-                    Op::Gt | Op::Ge | Op::Lt | Op::Le => {
-                        if (left != Kind::Unknown && left != Kind::Number)
-                            || (right != Kind::Unknown && right != Kind::Number) {
-                            return Err(format!("Nano native: comparação {:?} exige Numbers", op));
-                        }
-                        next.push(Kind::Boolean);
-                    }
-                    Op::And | Op::Or => {
-                        if (!matches!(left, Kind::Unknown | Kind::Number | Kind::Boolean))
-                            || (!matches!(right, Kind::Unknown | Kind::Number | Kind::Boolean)) {
-                            return Err(format!("Nano native: lógica {:?} exige valores booleanos ou numéricos", op));
-                        }
-                        next.push(Kind::Boolean);
-                    }
-                    _ => {
-                        if *op == Op::Add {
-                            if left == Kind::Text && right == Kind::Text {
-                                next.push(Kind::Text);
-                            } else if left == Kind::Unknown || right == Kind::Unknown {
-                                next.push(Kind::Unknown);
-                            } else if left == Kind::Number && right == Kind::Number {
-                                next.push(Kind::Number);
+                if left == Kind::Any || right == Kind::Any {
+                    next.push(Kind::Any);
+                } else {
+                    match op {
+                        Op::Eq | Op::Ne => {
+                            if left == Kind::Unknown || right == Kind::Unknown {
+                                next.push(Kind::Boolean);
+                            } else if left != right || !matches!(left, Kind::Number | Kind::Boolean | Kind::Text | Kind::Null) {
+                                return Err(format!("Nano native: comparação {:?} exige valores compatíveis", op));
                             } else {
-                                return Err(format!("Nano native: '+' exige Number + Number ou Text + Text"));
+                                next.push(Kind::Boolean);
                             }
-                        } else {
+                        }
+                        Op::Gt | Op::Ge | Op::Lt | Op::Le => {
                             if (left != Kind::Unknown && left != Kind::Number)
                                 || (right != Kind::Unknown && right != Kind::Number) {
-                                return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                                return Err(format!("Nano native: comparação {:?} exige Numbers", op));
                             }
-                            next.push(Kind::Number);
+                            next.push(Kind::Boolean);
+                        }
+                        Op::And | Op::Or => {
+                            if (!matches!(left, Kind::Unknown | Kind::Number | Kind::Boolean))
+                                || (!matches!(right, Kind::Unknown | Kind::Number | Kind::Boolean)) {
+                                return Err(format!("Nano native: lógica {:?} exige valores booleanos ou numéricos", op));
+                            }
+                            next.push(Kind::Boolean);
+                        }
+                        _ => {
+                            if *op == Op::Add {
+                                if left == Kind::Text && right == Kind::Text {
+                                    next.push(Kind::Text);
+                                } else if left == Kind::Unknown || right == Kind::Unknown {
+                                    next.push(Kind::Unknown);
+                                } else if left == Kind::Number && right == Kind::Number {
+                                    next.push(Kind::Number);
+                                } else {
+                                    return Err(format!("Nano native: '+' exige Number + Number ou Text + Text"));
+                                }
+                            } else {
+                                if (left != Kind::Unknown && left != Kind::Number)
+                                    || (right != Kind::Unknown && right != Kind::Number) {
+                                    return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                                }
+                                next.push(Kind::Number);
+                            }
                         }
                     }
                 }
@@ -879,7 +883,7 @@ fn analyze_stack(
                         next.push(Kind::Number);
                     }
                     crate::UnaryOp::Not => {
-                        if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null) {
+                        if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null | Kind::Any) {
                             return Err(format!("Nano native: operador {:?} exige valor lógico", op));
                         }
                         next.push(Kind::Boolean);
@@ -896,6 +900,17 @@ fn analyze_stack(
                 next.push(Kind::Number);
             }
             IrInst::Call(callee, count) => {
+                if callee == "len" || callee == "std.collections.len" {
+                    if *count != 1 {
+                        return Err("Nano native: len() recebe exatamente 1 argumento".into());
+                    }
+                    let value = next.pop().ok_or_else(|| format!("Nano native: len() sem argumento em '{name}'"))?;
+                    if !matches!(value, Kind::Unknown | Kind::Text | Kind::Any) {
+                        return Err("Nano native: len() exige Text, List ou Object".into());
+                    }
+                    next.push(Kind::Number);
+                    continue;
+                }
                 if *count > 8 {
                     return Err(format!("Nano native: chamada '{callee}' tem mais de 8 argumentos"));
                 }
@@ -932,14 +947,14 @@ fn analyze_stack(
             }
             IrInst::JumpIfFalse(_) => {
                 let condition = next.pop().ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
-                if !matches!(condition, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null) {
+                if !matches!(condition, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null | Kind::Any) {
                     return Err(format!("Nano native: condição usa um tipo não suportado em '{name}'"));
                 }
             }
             IrInst::Jump(_) => {}
             IrInst::Return => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null) {
+                if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null | Kind::Any) {
                     return Err(format!("Nano native: retorno de '{name}' tem um tipo que o backend não suporta"));
                 }
                 if value != Kind::Unknown {
@@ -956,13 +971,57 @@ fn analyze_stack(
                     }
                 }
             }
-            IrInst::MakeList(_)
-            | IrInst::MakeObject(_)
-            | IrInst::Index
-            | IrInst::Field(_)
-            | IrInst::SetIndex
-            | IrInst::SetField(_)
-            | IrInst::IterInit
+            IrInst::MakeList(count) => {
+                if *count > next.len() {
+                    return Err(format!("Nano native: MakeList inválido em '{name}'"));
+                }
+                for _ in 0..*count {
+                    next.pop();
+                }
+                next.push(Kind::Any);
+            }
+            IrInst::MakeObject(keys) => {
+                if keys.len() > next.len() {
+                    return Err(format!("Nano native: MakeObject inválido em '{name}'"));
+                }
+                for _ in 0..keys.len() {
+                    next.pop();
+                }
+                next.push(Kind::Any);
+            }
+            IrInst::Index => {
+                let _index = next.pop().ok_or_else(|| format!("Nano native: Index sem índice em '{name}'"))?;
+                let target = next.pop().ok_or_else(|| format!("Nano native: Index sem alvo em '{name}'"))?;
+                if !matches!(target, Kind::Unknown | Kind::Any) {
+                    return Err("Nano native: Index exige List/Object dinâmico".into());
+                }
+                next.push(Kind::Any);
+            }
+            IrInst::Field(_) => {
+                let target = next.pop().ok_or_else(|| format!("Nano native: Field sem alvo em '{name}'"))?;
+                if !matches!(target, Kind::Unknown | Kind::Any) {
+                    return Err("Nano native: Field exige Object dinâmico".into());
+                }
+                next.push(Kind::Any);
+            }
+            IrInst::SetIndex => {
+                let _value = next.pop().ok_or_else(|| format!("Nano native: SetIndex sem valor em '{name}'"))?;
+                let _index = next.pop().ok_or_else(|| format!("Nano native: SetIndex sem índice em '{name}'"))?;
+                let target = next.pop().ok_or_else(|| format!("Nano native: SetIndex sem alvo em '{name}'"))?;
+                if !matches!(target, Kind::Unknown | Kind::Any) {
+                    return Err("Nano native: SetIndex exige List/Object dinâmico".into());
+                }
+                next.push(Kind::Any);
+            }
+            IrInst::SetField(_) => {
+                let _value = next.pop().ok_or_else(|| format!("Nano native: SetField sem valor em '{name}'"))?;
+                let target = next.pop().ok_or_else(|| format!("Nano native: SetField sem alvo em '{name}'"))?;
+                if !matches!(target, Kind::Unknown | Kind::Any) {
+                    return Err("Nano native: SetField exige Object dinâmico".into());
+                }
+                next.push(Kind::Any);
+            }
+            IrInst::IterInit
             | IrInst::IterNext(_, _)
             | IrInst::Use(_) => {
                 return Err(format!("Nano native: instrução não suportada em '{name}': {:?}", code[ip]));
