@@ -215,20 +215,62 @@ fn format_source(src: &str) -> String {
     }
 }
 
+fn collect_nano_files(path: &std::path::Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        if path.extension().and_then(|v| v.to_str()) == Some("nano") {
+            files.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+    if path.is_dir() {
+        for entry in fs::read_dir(path).map_err(|e| format!("Nano fmt: {e}"))? {
+            let entry = entry.map_err(|e| format!("Nano fmt: {e}"))?;
+            collect_nano_files(&entry.path(), files)?;
+        }
+        return Ok(());
+    }
+    Err(format!("Nano fmt: caminho '{}' não existe", path.display()))
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("uso: nano-fmt <arquivo.nano>");
+    let check = args.iter().any(|arg| arg == "--check");
+    let paths: Vec<&String> = args.iter().skip(1).filter(|arg| arg.as_str() != "--check").collect();
+    if paths.len() != 1 {
+        eprintln!("uso: nano-fmt [--check] <arquivo.nano|diretório>");
         process::exit(2);
     }
-    let path = &args[1];
-    let src = fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("Nano fmt: {e}");
-        process::exit(1)
-    });
-    if let Err(e) = fs::write(path, format_source(&src)) {
-        eprintln!("Nano fmt: {e}");
-        process::exit(1)
+
+    let mut files = Vec::new();
+    if let Err(e) = collect_nano_files(std::path::Path::new(paths[0]), &mut files) {
+        eprintln!("{e}");
+        process::exit(1);
+    }
+    files.sort();
+
+    let mut changed = Vec::new();
+    for path in files {
+        let src = fs::read_to_string(&path).unwrap_or_else(|e| {
+            eprintln!("Nano fmt: {}: {e}", path.display());
+            process::exit(1)
+        });
+        let formatted = format_source(&src);
+        if formatted != src {
+            changed.push(path.clone());
+            if !check {
+                fs::write(&path, formatted).unwrap_or_else(|e| {
+                    eprintln!("Nano fmt: {}: {e}", path.display());
+                    process::exit(1)
+                });
+            }
+        }
+    }
+
+    if check && !changed.is_empty() {
+        for path in changed {
+            eprintln!("Nano fmt: não formatado: {}", path.display());
+        }
+        process::exit(1);
     }
 }
 
