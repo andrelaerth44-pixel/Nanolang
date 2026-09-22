@@ -922,7 +922,12 @@ impl Semantic {
             Expr::Call(name, args) => {
                 for arg in args { self.expr_type(arg)?; }
                 if name == "assert" {
-                    if args.len() != 1 { return Err("Nano: assert() recebe 1 argumento".into()); }
+                    if args.len() != 1 && args.len() != 2 {
+                        return Err("Nano: assert() recebe condição e, opcionalmente, mensagem".into());
+                    }
+                    if args.len() == 2 && self.expr_type(&args[1])? != Type::Text {
+                        return Err("Nano: segundo argumento de assert() deve ser Text".into());
+                    }
                     return Ok(Type::Null);
                 }
                 if name == "channel" || name == "std.async.channel" {
