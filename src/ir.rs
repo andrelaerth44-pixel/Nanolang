@@ -965,7 +965,11 @@ impl IrRuntime {
             "std.async.send" => "send",
             "std.async.recv" => "recv",
             "std.async.close_channel" => "close_channel",
-            "std.async.sleep_ms" => "time_sleep_ms",
+            "std.async.spawn" => "async_spawn",
+            "std.async.join" => "async_join",
+            "std.async.select" => "async_select",
+            "std.async.all" => "async_all",
+            "std.async.sleep_ms" => "async_sleep_ms",
             "std.async.yield" => "thread_yield",
             other => other,
         };
@@ -1254,7 +1258,7 @@ impl IrRuntime {
             return Ok(Value::Number(handle as f64));
         }
 
-        if name == "task_spawn" {
+        if name == "task_spawn" || name == "async_spawn" {
             if args.len() != 2 { return Err("Nano: task_spawn() recebe nome da função e lista de argumentos".into()); }
             let function_name = text_arg(&args[0], "função")?;
             let argv = match &args[1] {
@@ -1311,6 +1315,67 @@ impl IrRuntime {
             });
             self.tasks.insert(handle, join);
             return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "async_sleep_ms" {
+            if args.len() != 1 { return Err("Nano: async.sleep_ms() recebe milissegundos".into()); }
+            let ms = number_arg(&args[0], "milissegundos")?;
+            if ms < 0.0 { return Err("Nano: duração não pode ser negativa".into()); }
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            let join = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(ms as u64));
+                Ok(TaskValue::Null)
+            });
+            self.tasks.insert(handle, join);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "async_select" {
+            if args.len() != 1 { return Err("Nano: async.select() recebe uma lista de handles".into()); }
+            let handles = match &args[0] {
+                Value::List(values) => values.iter().map(|value| integer_arg(value, "handle")).collect::<Result<Vec<_>, _>>()?,
+                _ => return Err("Nano: async.select() requer List".into()),
+            };
+            if handles.is_empty() { return Ok(Value::Null); }
+            loop {
+                for handle in &handles {
+                    if let Some(task) = self.tasks.get(handle) {
+                        if task.is_finished() {
+                            return Ok(Value::Number(*handle as f64));
+                        }
+                    }
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        if name == "async_all" {
+            if args.len() != 1 { return Err("Nano: async.all() recebe uma lista de handles".into()); }
+            let handles = match &args[0] {
+                Value::List(values) => values.iter().map(|value| integer_arg(value, "handle")).collect::<Result<Vec<_>, _>>()?,
+                _ => return Err("Nano: async.all() requer List".into()),
+            };
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                let task = self.tasks.remove(&handle)
+                    .ok_or_else(|| format!("Nano: tarefa {handle} não encontrada"))?;
+                let value = task.join()
+                    .map_err(|_| format!("Nano: async.all(): tarefa {handle} entrou em pânico"))?
+                    .map_err(|error| format!("Nano: async.all(): {error}"))?;
+                results.push(value.into_value());
+            }
+            return Ok(Value::List(results));
+        }
+
+        if name == "async_join" {
+            if args.len() != 1 { return Err("Nano: async.join() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let task = self.tasks.remove(&handle)
+                .ok_or_else(|| format!("Nano: tarefa {handle} não encontrada"))?;
+            return task.join()
+                .map_err(|_| format!("Nano: async.join(): tarefa {handle} entrou em pânico"))?
+                .map(TaskValue::into_value);
         }
 
         if name == "thread_join" || name == "task_join" {
@@ -2271,7 +2336,7 @@ fn is_builtin_name(name: &str) -> bool {
         | "fs_mkdir" | "fs_remove"
         | "env_get" | "env_set" | "process_spawn" | "process_wait"
         | "time_now_ms" | "time_sleep_ms" | "thread_sleep_ms" | "thread_spawn" | "thread_join"
-        | "task_spawn" | "task_join"
+        | "task_spawn" | "task_join" | "async_spawn" | "async_join" | "async_select" | "async_all" | "async_sleep_ms"
         | "channel" | "send" | "recv" | "close_channel"
         | "net_tcp_connect" | "net_tcp_listen" | "net_tcp_accept" | "net_tcp_send"
         | "net_tcp_recv" | "net_tcp_close" | "net_http_get"
