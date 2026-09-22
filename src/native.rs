@@ -452,6 +452,12 @@ impl NativeModule {
                                         stack_offset(slot)
                                     ));
                                 }
+                                Kind::Any => {
+                                    self.text.push_str(&format!(
+                                        "    movq {}(%rbp), %rdi\n    call nano_any_truthy@PLT\n    xorl $1, %eax\n",
+                                        stack_offset(slot)
+                                    ));
+                                }
                                 _ => {
                                     self.load_stack(slot, "%xmm0");
                                     let zero = self.add_float(0.0);
@@ -489,6 +495,15 @@ impl NativeModule {
                     let float_regs = ["%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"];
                     let int_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9", "%r10", "%r11"];
                     let arg_kinds = &entry_states[ip].as_ref().unwrap()[start..depth];
+                    if (callee == "len" || callee == "std.collections.len") && *count == 1 {
+                        let kind = arg_kinds[0];
+                        self.box_value(start, kind)?;
+                        self.text.push_str(&format!(
+                            "    movq %rax, %rdi\n    call nano_any_len@PLT\n    movsd %xmm0, {}(%rbp)\n",
+                            stack_offset(start)
+                        ));
+                        continue;
+                    }
                     let mut float_index = 0usize;
                     let mut int_index = 0usize;
                     for (offset, kind) in arg_kinds.iter().copied().enumerate() {
@@ -498,7 +513,7 @@ impl NativeModule {
                                 self.load_stack(arg, float_regs[float_index]);
                                 float_index += 1;
                             }
-                            Kind::Text | Kind::Function | Kind::Null => {
+                            Kind::Text | Kind::Function | Kind::Null | Kind::Any => {
                                 self.text.push_str(&format!(
                                     "    movq {}(%rbp), {}\n",
                                     stack_offset(arg),
@@ -517,11 +532,7 @@ impl NativeModule {
                         self.text.push_str(&format!("    call nano_fn_{}\n", sanitize(callee)));
                     }
                     match function_returns.get(callee).copied().unwrap_or(Kind::Number) {
-                        Kind::Function => self.text.push_str(&format!(
-                            "    movq %rax, {}(%rbp)\n",
-                            stack_offset(start)
-                        )),
-                        Kind::Text => self.text.push_str(&format!(
+                        Kind::Function | Kind::Text | Kind::Null | Kind::Any => self.text.push_str(&format!(
                             "    movq %rax, {}(%rbp)\n",
                             stack_offset(start)
                         )),
@@ -584,6 +595,12 @@ impl NativeModule {
                         Kind::Null => {
                             self.text.push_str("    leaq nano_null(%rip), %rdi\n    call puts@PLT\n");
                         }
+                        Kind::Any => {
+                            self.text.push_str(&format!(
+                                "    movq {}(%rbp), %rdi\n    call nano_any_print@PLT\n",
+                                stack_offset(slot)
+                            ));
+                        }
                         Kind::Unknown => {
                             return Err(format!("Nano native: print recebeu tipo desconhecido em '{name}'"));
                         }
@@ -607,6 +624,15 @@ impl NativeModule {
                         Kind::Function | Kind::Null => {
                             self.text.push_str(&format!(
                                 "    cmpq $0, {}(%rbp)\n    je {}\n",
+                                stack_offset(slot),
+                                labels.get(target)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!(".L{symbol}_end"))
+                            ));
+                        }
+                        Kind::Any => {
+                            self.text.push_str(&format!(
+                                "    movq {}(%rbp), %rdi\n    call nano_any_truthy@PLT\n    testl %eax, %eax\n    je {}\n",
                                 stack_offset(slot),
                                 labels.get(target)
                                     .cloned()
@@ -638,7 +664,7 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match kind {
-                        Kind::Function | Kind::Text => self.text.push_str(&format!(
+                        Kind::Function | Kind::Text | Kind::Null | Kind::Any => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n",
                             stack_offset(slot)
                         )),
