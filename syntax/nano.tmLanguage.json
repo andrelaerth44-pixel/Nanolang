@@ -1,0 +1,73 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nano",
+  "scopeName": "source.nano",
+  "fileTypes": ["nano"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#builtins" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#properties" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.number-sign.nano", "match": "#.*$" },
+        { "name": "comment.line.double-slash.nano", "match": "//.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.nano",
+      "begin": """,
+      "end": """,
+      "patterns": [
+        { "name": "constant.character.escape.nano", "match": "\\\\(?:n|r|t|\\|\")" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.nano", "match": "\\b(?:[0-9]+\\.[0-9]*|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.integer.nano", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.nano", "match": "\\b(?:if|else|while|for|in|return|use)\\b" },
+        { "name": "storage.type.function.nano", "match": "\\bfunction\\b" },
+        { "name": "keyword.other.print.nano", "match": "\\bprint\\b" }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.boolean.nano", "match": "\\b(?:true|false|null)\\b" }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        { "name": "support.function.builtin.nano", "match": "\\b(?:len|range|tensor|parameter|zeros|shape|matmul|sum|mean|grad|step|adam|backend|device|dtype|memory_bytes|cast)\\b(?=\\s*\\()" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        { "name": "entity.name.function.definition.nano", "match": "(?<=\\bfunction\\s)[A-Za-z_][A-Za-z0-9_]*" },
+        { "name": "entity.name.function.call.nano", "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.nano", "match": "===|!==|==|!=|>=|<=|&&|\\|\\||=>|[+*/%<>=!&|^-]" }
+      ]
+    },
+    "properties": {
+      "patterns": [
+        { "name": "variable.other.property.nano", "match": "\\.[A-Za-z_][A-Za-z0-9_]*" },
+        { "name": "variable.other.nano", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
+      ]
+    }
+  }
+}
