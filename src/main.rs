@@ -1819,7 +1819,10 @@ fn print_debug_ir(program: &ir::IrProgram) {
     for (index, inst) in program.code.iter().enumerate() {
         println!("{index:04}  {inst:?}");
     }
-    for (name, function) in &program.functions {
+    let mut names: Vec<&String> = program.functions.keys().collect();
+    names.sort();
+    for name in names {
+        let function = &program.functions[name];
         println!("\n=== function {name}({}) ===", function.params.join(", "));
         for (index, inst) in function.code.iter().enumerate() {
             println!("{index:04}  {inst:?}");
