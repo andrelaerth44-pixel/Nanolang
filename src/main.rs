@@ -1,3 +1,4 @@
+mod lint;
 mod ui;
 mod backend;
 mod dtype;
@@ -1424,6 +1425,7 @@ fn cmp(a: Value, b: Value, f: fn(f64,f64)->bool) -> Result<Value,String> {
 enum CliCommand {
     Run,
     Check,
+    Lint,
     Test,
     BuildNative,
 }
@@ -1434,9 +1436,10 @@ fn parse_cli(
     let command = match args.get(1).map(String::as_str) {
         Some("run") => CliCommand::Run,
         Some("check") => CliCommand::Check,
+        Some("lint") => CliCommand::Lint,
         Some("test") => CliCommand::Test,
         Some("build") => CliCommand::BuildNative,
-        _ => return Err("uso: nano run|check|test|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo]".into()),
+        _ => return Err("uso: nano run|check|lint|test|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo]".into()),
     };
 
     let mut path = None;
@@ -1596,6 +1599,43 @@ fn main() {
             process::exit(2);
         }
     };
+    if command == CliCommand::Lint {
+        let source = match fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Nano: não foi possível ler '{path}': {e}");
+                process::exit(1);
+            }
+        };
+        let tokens = match Lexer::new(&source).lex() {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        };
+        let program = match Parser::new(tokens).program() {
+            Ok(program) => program,
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        };
+        let diagnostics = lint::lint(&program);
+        let errors = diagnostics.iter().filter(|d| d.severity == lint::Severity::Error).count();
+        for diagnostic in diagnostics {
+            let level = match diagnostic.severity {
+                lint::Severity::Warning => "warning",
+                lint::Severity::Error => "error",
+            };
+            println!("{level}: {}", diagnostic.message);
+        }
+        if errors > 0 {
+            process::exit(1);
+        }
+        return;
+    }
+
     if command == CliCommand::Test {
         if let Err(e) = run_tests(&path) {
             eprintln!("{e}");
@@ -1707,6 +1747,17 @@ mod tests {
         let args = vec!["nano".into(), "run".into()];
         let (command, path, backend, dtype, output) = parse_cli(&args).unwrap();
         assert_eq!(command, CliCommand::Run);
+        assert_eq!(path, "main.nano");
+        assert_eq!(backend, None);
+        assert_eq!(dtype, None);
+        assert_eq!(output, None);
+    }
+
+    #[test]
+    fn cli_supports_lint() {
+        let args = vec!["nano".into(), "lint".into(), "main.nano".into()];
+        let (command, path, backend, dtype, output) = parse_cli(&args).unwrap();
+        assert_eq!(command, CliCommand::Lint);
         assert_eq!(path, "main.nano");
         assert_eq!(backend, None);
         assert_eq!(dtype, None);
