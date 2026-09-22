@@ -1,16 +1,6 @@
 # Nano self-hosted compiler v0.1
 # AST -> Nano IR textual.
-# O IR textual usa labels; uma etapa posterior resolve labels para offsets.
-
-function state() {
-    return {next_label: 0}
-}
-
-function label(state) {
-    value = state.next_label
-    state.next_label = value + 1
-    return "L" + to_text(value)
-}
+# Labels são simbólicos e podem ser resolvidos por uma etapa posterior.
 
 function emit_expr(node) {
     lines = []
@@ -20,7 +10,7 @@ function emit_expr(node) {
     }
 
     if node.kind == "string" {
-        return append(lines, "const "" + node.value + """)
+        return append(lines, "const \"" + node.value + "\"")
     }
 
     if node.kind == "boolean" {
@@ -69,42 +59,46 @@ function emit_expr(node) {
     return append(lines, "unsupported " + node.kind)
 }
 
-function emit_block(body, state) {
+function emit_block(body, counter) {
     lines = []
+    next_counter = counter
+
     for stmt in body {
-        part = emit_stmt(stmt, state)
-        for line in part {
+        part = emit_stmt(stmt, next_counter)
+        for line in part.lines {
             lines = append(lines, line)
         }
+        next_counter = part.next
     }
-    return lines
+
+    return {lines: lines, next: next_counter}
 }
 
-function emit_stmt(stmt, state) {
+function emit_stmt(stmt, counter) {
     lines = []
 
     if stmt.kind == "assign" {
         lines = emit_expr(stmt.value)
-        return append(lines, "store " + stmt.name)
+        return {lines: append(lines, "store " + stmt.name), next: counter}
     }
 
     if stmt.kind == "expr" {
         lines = emit_expr(stmt.value)
-        return append(lines, "pop")
+        return {lines: append(lines, "pop"), next: counter}
     }
 
     if stmt.kind == "print" {
         lines = emit_expr(stmt.value)
-        return append(lines, "print")
+        return {lines: append(lines, "print"), next: counter}
     }
 
     if stmt.kind == "return" {
         lines = emit_expr(stmt.value)
-        return append(lines, "return")
+        return {lines: append(lines, "return"), next: counter}
     }
 
     if stmt.kind == "use" {
-        return append(lines, "use " + stmt.path)
+        return {lines: append(lines, "use " + stmt.path), next: counter}
     }
 
     if stmt.kind == "if" {
@@ -112,28 +106,43 @@ function emit_stmt(stmt, state) {
         for line in condition {
             lines = append(lines, line)
         }
-        else_label = label(state)
-        end_label = label(state)
+
+        else_id = counter
+        counter = counter + 1
+        end_id = counter
+        counter = counter + 1
+        else_label = "L" + to_text(else_id)
+        end_label = "L" + to_text(end_id)
+
         lines = append(lines, "jump_if_false " + else_label)
 
-        yes = emit_block(stmt.yes.body, state)
-        for line in yes {
+        yes = emit_block(stmt.yes.body, counter)
+        for line in yes.lines {
             lines = append(lines, line)
         }
+        counter = yes.next
+
         lines = append(lines, "jump " + end_label)
         lines = append(lines, "label " + else_label)
 
-        no = emit_block(stmt.no.body, state)
-        for line in no {
+        no = emit_block(stmt.no.body, counter)
+        for line in no.lines {
             lines = append(lines, line)
         }
+        counter = no.next
+
         lines = append(lines, "label " + end_label)
-        return lines
+        return {lines: lines, next: counter}
     }
 
     if stmt.kind == "while" {
-        start_label = label(state)
-        end_label = label(state)
+        start_id = counter
+        counter = counter + 1
+        end_id = counter
+        counter = counter + 1
+        start_label = "L" + to_text(start_id)
+        end_label = "L" + to_text(end_id)
+
         lines = append(lines, "label " + start_label)
 
         condition = emit_expr(stmt.condition)
@@ -142,28 +151,23 @@ function emit_stmt(stmt, state) {
         }
         lines = append(lines, "jump_if_false " + end_label)
 
-        body = emit_block(stmt.body.body, state)
-        for line in body {
+        body = emit_block(stmt.body.body, counter)
+        for line in body.lines {
             lines = append(lines, line)
         }
+        counter = body.next
+
         lines = append(lines, "jump " + start_label)
         lines = append(lines, "label " + end_label)
-        return lines
+        return {lines: lines, next: counter}
     }
 
-    return append(lines, "unsupported_stmt " + stmt.kind)
+    return {lines: append(lines, "unsupported_stmt " + stmt.kind), next: counter}
 }
 
 function emit_program(program) {
-    state = state()
-    lines = []
-    for stmt in program.body {
-        part = emit_stmt(stmt, state)
-        for line in part {
-            lines = append(lines, line)
-        }
-    }
-    return lines
+    result = emit_block(program.body, 0)
+    return result.lines
 }
 
 function main() {
