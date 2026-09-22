@@ -48,7 +48,7 @@
     },
     "builtins": {
       "patterns": [
-        { "name": "support.function.builtin.nano", "match": "\\b(?:len|range|tensor|parameter|zeros|shape|matmul|sum|mean|grad|step|adam|backend|device|dtype|memory_bytes|cast)\\b(?=\\s*\\()" }
+        { "name": "support.function.builtin.nano", "match": "\\b(?:len|range|to_text|to_number|upper|lower|trim|contains|starts_with|ends_with|replace|substring|char_at|split|join|append|tensor|parameter|zeros|shape|matmul|sum|mean|grad|step|adam|backend|device|dtype|memory_bytes|cast|fs_read_text|fs_write_text|fs_append_text|fs_exists|fs_list|fs_mkdir|fs_remove|env_get|env_set|process_spawn|process_wait|time_now_ms|time_sleep_ms|thread_sleep_ms|thread_spawn|thread_join|net_tcp_connect|net_tcp_listen|net_tcp_accept|net_tcp_send|net_tcp_recv|net_tcp_close|ui_window|ui_set_title|ui_close|ui_poll_event)\\b(?=\\s*\\()" }
       ]
     },
     "functions": {
@@ -59,7 +59,7 @@
     },
     "operators": {
       "patterns": [
-        { "name": "keyword.operator.nano", "match": "==|!=|>=|<=|[+*/<>=-]" }
+        { "name": "keyword.operator.nano", "match": "==|!=|>=|<=|&&|\\|\\||[+*/%<>=!-]" }
       ]
     },
     "properties": {
