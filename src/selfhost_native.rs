@@ -9,27 +9,28 @@ pub(crate) fn parse(source: &str) -> Result<IrProgram, String> {
     let mut current_params = Vec::new();
     let mut current_code = Vec::new();
     let mut labels = HashMap::<String, usize>::new();
-    let mut unresolved = Vec::<(usize, String, bool)>::new();
+    let mut unresolved = Vec::<(usize, String, u8, String)>::new();
 
     let finish = |name: &Option<String>,
                   params: &mut Vec<String>,
                   code: &mut Vec<IrInst>,
                   labels: &mut HashMap<String, usize>,
-                  unresolved: &mut Vec<(usize, String, bool)>,
+                  unresolved: &mut Vec<(usize, String, u8, String)>,
                   functions: &mut HashMap<String, IrFunction>,
                   main_code: &mut Vec<IrInst>| -> Result<(), String> {
         let Some(function_name) = name else {
             return Ok(());
         };
 
-        for (index, label, conditional) in unresolved.drain(..) {
+        for (index, label, kind, name) in unresolved.drain(..) {
             let target = labels.get(&label)
                 .copied()
                 .ok_or_else(|| format!("Nano selfhost IR: label '{label}' não existe"))?;
-            code[index] = if conditional {
-                IrInst::JumpIfFalse(target)
-            } else {
-                IrInst::Jump(target)
+            code[index] = match kind {
+                0 => IrInst::Jump(target),
+                1 => IrInst::JumpIfFalse(target),
+                2 => IrInst::IterNext(name, target),
+                _ => return Err("Nano selfhost IR: referência de label inválida".into()),
             };
         }
 
@@ -127,17 +128,17 @@ pub(crate) fn parse(source: &str) -> Result<IrProgram, String> {
                 let name = it.next().ok_or_else(|| "Nano selfhost IR: iter_next sem nome".to_string())?;
                 let label = it.next().ok_or_else(|| "Nano selfhost IR: iter_next sem destino".to_string())?;
                 let target_index = current_code.len();
-                unresolved.push((target_index, label.to_string(), false));
+                unresolved.push((target_index, label.to_string(), 2, name.to_string()));
                 IrInst::IterNext(name.to_string(), usize::MAX)
             }
             "jump" => {
                 let index = current_code.len();
-                unresolved.push((index, rest.to_string(), false));
+                unresolved.push((index, rest.to_string(), 0, String::new()));
                 IrInst::Jump(usize::MAX)
             }
             "jump_if_false" => {
                 let index = current_code.len();
-                unresolved.push((index, rest.to_string(), true));
+                unresolved.push((index, rest.to_string(), 1, String::new()));
                 IrInst::JumpIfFalse(usize::MAX)
             }
             "use" => IrInst::Use(rest.to_string()),
