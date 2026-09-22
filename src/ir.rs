@@ -3234,89 +3234,211 @@ pub(crate) enum DebugStop {
     Exited,
 }
 
-pub(crate) struct DebugSession {
-    runtime: IrRuntime,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DebugStepMode {
+    Instruction,
+    Next,
+    StepOut,
+}
+
+#[derive(Debug, Clone)]
+struct DebugFrame {
+    id: usize,
+    name: String,
     code: Vec<IrInst>,
+    spans: Vec<Option<SourceSpan>>,
     ip: usize,
     stack: Vec<Value>,
     iterators: Vec<IterState>,
-    breakpoints: std::collections::HashSet<usize>,
-    started: bool,
+    locals: HashMap<String, Value>,
+}
+
+pub(crate) struct DebugSession {
+    runtime: IrRuntime,
+    debug_functions: HashMap<String, Vec<Option<SourceSpan>>>,
+    frames: Vec<DebugFrame>,
+    breakpoints: HashSet<usize>,
+    last_breakpoint: Option<(usize, usize)>,
+    next_frame_id: usize,
 }
 
 impl DebugSession {
-    pub(crate) fn new(program: &IrProgram) -> Result<Self, String> {
+    pub(crate) fn new(program: &IrProgram, debug: &DebugMetadata) -> Result<Self, String> {
         let mut runtime = IrRuntime::new();
         runtime.quiet = true;
         runtime.functions.extend(program.functions.clone());
+
         Ok(Self {
             runtime,
-            code: program.code.clone(),
-            ip: 0,
-            stack: Vec::new(),
-            iterators: Vec::new(),
-            breakpoints: std::collections::HashSet::new(),
-            started: false,
+            debug_functions: debug.functions.clone(),
+            frames: vec![DebugFrame {
+                id: 1,
+                name: "_main".into(),
+                code: program.code.clone(),
+                spans: debug.main.clone(),
+                ip: 0,
+                stack: Vec::new(),
+                iterators: Vec::new(),
+                locals: HashMap::new(),
+            }],
+            breakpoints: HashSet::new(),
+            last_breakpoint: None,
+            next_frame_id: 2,
         })
     }
 
     pub(crate) fn set_breakpoints(&mut self, lines: &[usize]) {
-        self.breakpoints.clear();
-        self.breakpoints.extend(lines.iter().copied().filter(|line| *line > 0).map(|line| line - 1));
-    }
-
-    pub(crate) fn current_line(&self) -> usize {
-        self.ip.saturating_add(1)
+        self.breakpoints = lines.iter().copied().filter(|line| *line > 0).collect();
+        self.last_breakpoint = None;
     }
 
     pub(crate) fn exited(&self) -> bool {
-        self.ip >= self.code.len()
+        self.frames.is_empty()
     }
 
-    pub(crate) fn variables(&self) -> std::collections::HashMap<String, Value> {
-        self.runtime.vars.clone()
+    fn current_frame(&self) -> Option<&DebugFrame> {
+        self.frames.last()
     }
 
-    pub(crate) fn evaluate(&self, expression: &str) -> Option<Value> {
-        self.runtime.vars.get(expression.trim()).cloned().or_else(|| match expression.trim() {
-            "true" => Some(Value::Boolean(true)),
-            "false" => Some(Value::Boolean(false)),
-            "null" => Some(Value::Null),
-            value if value.starts_with('"') && value.ends_with('"') => Some(Value::Text(value[1..value.len() - 1].to_string())),
-            value => value.parse::<f64>().ok().map(Value::Number),
-        })
+    fn current_frame_mut(&mut self) -> Option<&mut DebugFrame> {
+        self.frames.last_mut()
     }
 
-    pub(crate) fn step(&mut self) -> Result<DebugStop, String> {
+    fn current_span(&self) -> Option<SourceSpan> {
+        let frame = self.current_frame()?;
+        frame.spans.get(frame.ip).and_then(|span| *span)
+    }
+
+    pub(crate) fn current_line(&self) -> usize {
+        self.current_span().map(|span| span.start_line).unwrap_or(1)
+    }
+
+    pub(crate) fn current_column(&self) -> usize {
+        self.current_span().map(|span| span.start_col).unwrap_or(1)
+    }
+
+    pub(crate) fn stack_frames(&self) -> Vec<(usize, String, usize, usize)> {
+        self.frames.iter().rev().map(|frame| {
+            let span = frame.spans.get(frame.ip).and_then(|span| *span);
+            (
+                frame.id,
+                frame.name.clone(),
+                span.map(|value| value.start_line).unwrap_or(1),
+                span.map(|value| value.start_col).unwrap_or(1),
+            )
+        }).collect()
+    }
+
+    pub(crate) fn variables_for_frame(&self, frame_id: usize) -> HashMap<String, Value> {
+        self.frames.iter()
+            .find(|frame| frame.id == frame_id)
+            .map(|frame| {
+                let mut vars = self.runtime.vars.clone();
+                vars.extend(frame.locals.clone());
+                vars
+            })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn evaluate_for_frame(&self, frame_id: usize, expression: &str) -> Option<Value> {
+        let trimmed = expression.trim();
+        self.frames.iter()
+            .find(|frame| frame.id == frame_id)
+            .and_then(|frame| frame.locals.get(trimmed).cloned().or_else(|| self.runtime.vars.get(trimmed).cloned()))
+            .or_else(|| match trimmed {
+                "true" => Some(Value::Boolean(true)),
+                "false" => Some(Value::Boolean(false)),
+                "null" => Some(Value::Null),
+                value if value.starts_with('"') && value.ends_with('"') => Some(Value::Text(value[1..value.len()-1].to_string())),
+                value => value.parse::<f64>().ok().map(Value::Number),
+            })
+    }
+
+    fn breakpoint_here(&self) -> bool {
+        self.current_span()
+            .map(|span| self.breakpoints.iter().any(|line| span.contains_line(*line)))
+            .unwrap_or(false)
+    }
+
+    fn push_user_frame(&mut self, name: &str, args: Vec<Value>) -> Result<bool, String> {
+        let Some(function) = self.runtime.functions.get(name).cloned() else {
+            return Ok(false);
+        };
+        if function.params.len() != args.len() {
+            return Err(format!(
+                "Nano debug: função '{name}' esperava {} argumentos, recebeu {}",
+                function.params.len(), args.len()
+            ));
+        }
+
+        let mut locals = HashMap::new();
+        for (param, value) in function.params.iter().zip(args) {
+            locals.insert(param.clone(), value);
+        }
+
+        if let Some(caller) = self.current_frame_mut() {
+            caller.ip = caller.ip.saturating_add(1);
+        }
+
+        let frame = DebugFrame {
+            id: self.next_frame_id,
+            name: name.to_string(),
+            code: function.code,
+            spans: self.debug_functions.get(name).cloned().unwrap_or_default(),
+            ip: 0,
+            stack: Vec::new(),
+            iterators: Vec::new(),
+            locals,
+        };
+        self.next_frame_id += 1;
+        self.frames.push(frame);
+        Ok(true)
+    }
+
+    fn exec_one(&mut self) -> Result<(), String> {
         if self.exited() {
-            return Ok(DebugStop::Exited);
+            return Ok(());
         }
 
-        if self.started && self.breakpoints.contains(&self.ip) {
-            return Ok(DebugStop::Breakpoint);
-        }
-        self.started = true;
+        let instruction = {
+            let frame = self.current_frame().unwrap();
+            if frame.ip >= frame.code.len() {
+                return Ok(());
+            }
+            frame.code[frame.ip].clone()
+        };
 
-        let instruction = self.code[self.ip].clone();
+        let mut jumped = false;
         match instruction {
-            IrInst::Const(value) => self.stack.push(value),
+            IrInst::Const(value) => self.current_frame_mut().unwrap().stack.push(value),
+
             IrInst::Load(name) => {
-                let value = self.runtime.vars.get(&name).cloned()
-                    .ok_or_else(|| format!("Nano debug: variável '{name}' não definida"))?;
-                self.stack.push(value);
+                let value = {
+                    let frame = self.current_frame().unwrap();
+                    frame.locals.get(&name).cloned()
+                        .or_else(|| self.runtime.vars.get(&name).cloned())
+                        .ok_or_else(|| format!("Nano debug: variável '{name}' não definida"))?
+                };
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::Store(name) => {
-                let value = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em Store".to_string())?;
-                self.runtime.vars.insert(name, value);
+                let value = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia em Store".to_string())?;
+                self.current_frame_mut().unwrap().locals.insert(name, value);
             }
+
             IrInst::SetIndex => {
-                let value = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetIndex".to_string())?;
-                let index = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetIndex index".to_string())?;
-                let target = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetIndex target".to_string())?;
+                let frame = self.current_frame_mut().unwrap();
+                let value = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetIndex value".to_string())?;
+                let index = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetIndex index".to_string())?;
+                let target = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetIndex target".to_string())?;
                 let updated = match (target, index) {
-                    (Value::List(mut values), Value::Number(n)) if n >= 0.0 && n.fract() == 0.0 => {
-                        let index = n as usize;
-                        if index >= values.len() { return Err("Nano debug: índice fora do limite".into()); }
+                    (Value::List(mut values), Value::Number(index)) if index >= 0.0 && index.fract() == 0.0 => {
+                        let index = index as usize;
+                        if index >= values.len() {
+                            return Err("Nano debug: índice fora do limite".into());
+                        }
                         values[index] = value;
                         Value::List(values)
                     }
@@ -3326,135 +3448,249 @@ impl DebugSession {
                     }
                     _ => return Err("Nano debug: SetIndex inválido".into()),
                 };
-                self.stack.push(updated);
+                frame.stack.push(updated);
             }
+
             IrInst::SetField(name) => {
-                let value = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetField value".to_string())?;
-                let target = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetField target".to_string())?;
+                let frame = self.current_frame_mut().unwrap();
+                let value = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetField value".to_string())?;
+                let target = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em SetField target".to_string())?;
                 let mut values = match target {
                     Value::Object(values) => values,
                     _ => return Err("Nano debug: SetField requer Object".into()),
                 };
                 values.insert(name, value);
-                self.stack.push(Value::Object(values));
+                frame.stack.push(Value::Object(values));
             }
+
             IrInst::Binary(op) => {
-                let right = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia no operando direito".to_string())?;
-                let left = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia no operando esquerdo".to_string())?;
-                self.stack.push(self.runtime.binary_value(left, op, right)?);
+                let right = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia no operando direito".to_string())?;
+                let left = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia no operando esquerdo".to_string())?;
+                let value = self.runtime.binary_value(left, op, right)?;
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::Unary(op) => {
-                let value = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em Unary".to_string())?;
-                self.stack.push(unary_value(value, op)?);
+                let value = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia em Unary".to_string())?;
+                self.current_frame_mut().unwrap().stack.push(unary_value(value, op)?);
             }
+
             IrInst::FusedMulAdd => {
-                let bias = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em FMA bias".to_string())?;
-                let right = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em FMA right".to_string())?;
-                let left = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em FMA left".to_string())?;
-                self.stack.push(self.runtime.fused_mul_add_value(left, right, bias)?);
+                let (left, right, bias) = {
+                    let frame = self.current_frame_mut().unwrap();
+                    let bias = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em FMA bias".to_string())?;
+                    let right = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em FMA right".to_string())?;
+                    let left = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia em FMA left".to_string())?;
+                    (left, right, bias)
+                };
+                let value = self.runtime.fused_mul_add_value(left, right, bias)?;
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::MakeList(count) => {
-                let mut values = pop_n(&mut self.stack, count)?;
+                let mut values = pop_n(&mut self.current_frame_mut().unwrap().stack, count)?;
                 values.reverse();
-                self.stack.push(Value::List(values));
+                self.current_frame_mut().unwrap().stack.push(Value::List(values));
             }
+
             IrInst::MakeObject(keys) => {
-                let mut values = pop_n(&mut self.stack, keys.len())?;
+                let mut values = pop_n(&mut self.current_frame_mut().unwrap().stack, keys.len())?;
                 values.reverse();
                 let mut object = HashMap::new();
                 for (key, value) in keys.into_iter().zip(values) {
                     object.insert(key, value);
                 }
-                self.stack.push(Value::Object(object));
+                self.current_frame_mut().unwrap().stack.push(Value::Object(object));
             }
+
             IrInst::Index => {
-                let index = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia no índice".to_string())?;
-                let target = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia no target".to_string())?;
-                self.stack.push(self.runtime.index_value(target, index)?);
+                let (target, index) = {
+                    let frame = self.current_frame_mut().unwrap();
+                    let index = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia no índice".to_string())?;
+                    let target = frame.stack.pop().ok_or_else(|| "Nano debug: stack vazia no alvo".to_string())?;
+                    (target, index)
+                };
+                let value = self.runtime.index_value(target, index)?;
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::Field(name) => {
-                let target = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia no field target".to_string())?;
+                let target = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia no field".to_string())?;
                 let value = match target {
-                    Value::Object(values) => values.get(&name).cloned().ok_or_else(|| format!("Nano debug: campo '{name}' não existe"))?,
+                    Value::Object(values) => values.get(&name).cloned()
+                        .ok_or_else(|| format!("Nano debug: campo '{name}' não existe"))?,
                     _ => return Err("Nano debug: Field requer Object".into()),
                 };
-                self.stack.push(value);
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::Call(name, count) => {
-                let mut args = pop_n(&mut self.stack, count)?;
+                let mut args = pop_n(&mut self.current_frame_mut().unwrap().stack, count)?;
                 args.reverse();
-                self.stack.push(self.runtime.call(&name, args)?);
+                if self.push_user_frame(&name, args.clone())? {
+                    return Ok(());
+                }
+                let value = self.runtime.call(&name, args)?;
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::CallValue(count) => {
-                let mut args = pop_n(&mut self.stack, count)?;
+                let mut args = pop_n(&mut self.current_frame_mut().unwrap().stack, count)?;
                 args.reverse();
-                let target = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia no alvo da chamada".to_string())?;
+                let target = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia no alvo da chamada".to_string())?;
                 let name = match target {
                     Value::Function(name) => name,
                     _ => return Err("Nano debug: alvo não é Function".into()),
                 };
-                self.stack.push(self.runtime.call(&name, args)?);
+                if self.push_user_frame(&name, args.clone())? {
+                    return Ok(());
+                }
+                let value = self.runtime.call(&name, args)?;
+                self.current_frame_mut().unwrap().stack.push(value);
             }
+
             IrInst::Print => {
-                let value = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em Print".to_string())?;
-                println!("{}", value.show());
+                let _ = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia em Print".to_string())?;
             }
+
             IrInst::Pop => {
-                self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em Pop".to_string())?;
+                let _ = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia em Pop".to_string())?;
             }
+
             IrInst::JumpIfFalse(target) => {
-                let value = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em JumpIfFalse".to_string())?;
+                let value = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia em JumpIfFalse".to_string())?;
                 if !value.truthy() {
-                    self.ip = target;
-                    return Ok(if self.breakpoints.contains(&self.ip) { DebugStop::Breakpoint } else { DebugStop::Step });
+                    self.current_frame_mut().unwrap().ip = target;
+                    jumped = true;
                 }
             }
+
             IrInst::Jump(target) => {
-                self.ip = target;
-                return Ok(if self.breakpoints.contains(&self.ip) { DebugStop::Breakpoint } else { DebugStop::Step });
+                self.current_frame_mut().unwrap().ip = target;
+                jumped = true;
             }
+
             IrInst::IterInit => {
-                let iterable = self.stack.pop().ok_or_else(|| "Nano debug: stack vazia em IterInit".to_string())?;
+                let iterable = self.current_frame_mut().unwrap().stack.pop()
+                    .ok_or_else(|| "Nano debug: stack vazia em IterInit".to_string())?;
                 match iterable {
-                    Value::List(values) => self.iterators.push(IterState { values, index: 0 }),
+                    Value::List(values) => self.current_frame_mut().unwrap().iterators.push(IterState { values, index: 0 }),
                     _ => return Err("Nano debug: for requer List".into()),
                 }
             }
+
             IrInst::IterNext(name, target) => {
-                let item = match self.iterators.last_mut() {
-                    Some(iter) if iter.index < iter.values.len() => {
-                        let value = iter.values[iter.index].clone();
-                        iter.index += 1;
+                let next = {
+                    let frame = self.current_frame_mut().unwrap();
+                    let state = frame.iterators.last_mut()
+                        .ok_or_else(|| "Nano debug: iterador ausente".to_string())?;
+                    if state.index < state.values.len() {
+                        let value = state.values[state.index].clone();
+                        state.index += 1;
                         Some(value)
-                    }
-                    Some(_) => {
-                        self.iterators.pop();
+                    } else {
                         None
                     }
-                    None => return Err("Nano debug: IterNext sem IterInit".into()),
                 };
-                match item {
-                    Some(value) => { self.runtime.vars.insert(name, value); }
+                match next {
+                    Some(value) => {
+                        self.current_frame_mut().unwrap().locals.insert(name, value);
+                    }
                     None => {
-                        self.ip = target;
-                        return Ok(if self.breakpoints.contains(&self.ip) { DebugStop::Breakpoint } else { DebugStop::Step });
+                        self.current_frame_mut().unwrap().iterators.pop();
+                        self.current_frame_mut().unwrap().ip = target;
+                        jumped = true;
                     }
                 }
             }
+
             IrInst::Return => {
-                self.ip = self.code.len();
-                return Ok(DebugStop::Exited);
+                let value = self.current_frame_mut().unwrap().stack.pop().unwrap_or(Value::Null);
+                if self.frames.len() == 1 {
+                    let len = self.current_frame().unwrap().code.len();
+                    self.current_frame_mut().unwrap().ip = len;
+                    return Ok(());
+                }
+                self.frames.pop();
+                self.current_frame_mut().unwrap().stack.push(value);
+                return Ok(());
             }
+
             IrInst::Use(path) => self.runtime.load_module(&path)?,
         }
 
-        self.ip += 1;
+        if let Some(frame) = self.current_frame_mut() {
+            if !jumped {
+                frame.ip += 1;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn step(&mut self, mode: DebugStepMode) -> Result<DebugStop, String> {
         if self.exited() {
-            Ok(DebugStop::Exited)
-        } else if self.breakpoints.contains(&self.ip) {
-            Ok(DebugStop::Breakpoint)
-        } else {
-            Ok(DebugStop::Step)
+            return Ok(DebugStop::Exited);
+        }
+        let start_depth = self.frames.len();
+        let start_frame_id = self.frames.last().unwrap().id;
+        let start_span = self.current_span();
+
+        loop {
+            if self.exited() {
+                return Ok(DebugStop::Exited);
+            }
+
+            if self.breakpoint_here() {
+                let key = (self.frames.last().unwrap().id, self.frames.last().unwrap().ip);
+                if self.last_breakpoint != Some(key) {
+                    self.last_breakpoint = Some(key);
+                    return Ok(DebugStop::Breakpoint);
+                }
+            }
+
+            self.exec_one()?;
+
+            if self.exited() {
+                return Ok(DebugStop::Exited);
+            }
+
+            let depth = self.frames.len();
+            let span = self.current_span();
+            let frame_changed = depth != start_depth || self.frames.last().map(|f| f.id).unwrap_or(0) != start_frame_id;
+            let source_changed = span != start_span;
+
+            match mode {
+                DebugStepMode::Instruction => return Ok(DebugStop::Step),
+                DebugStepMode::Next if depth <= start_depth && source_changed => return Ok(DebugStop::Step),
+                DebugStepMode::StepOut if depth < start_depth => return Ok(DebugStop::Step),
+                _ if frame_changed && mode == DebugStepMode::Instruction => return Ok(DebugStop::Step),
+                _ => {}
+            }
+        }
+    }
+
+    pub(crate) fn continue_run(&mut self) -> Result<DebugStop, String> {
+        self.last_breakpoint = None;
+        loop {
+            if self.exited() {
+                return Ok(DebugStop::Exited);
+            }
+            if self.breakpoint_here() {
+                let key = (self.frames.last().unwrap().id, self.frames.last().unwrap().ip);
+                if self.last_breakpoint != Some(key) {
+                    self.last_breakpoint = Some(key);
+                    return Ok(DebugStop::Breakpoint);
+                }
+            }
+            self.exec_one()?;
         }
     }
 }
