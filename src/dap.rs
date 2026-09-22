@@ -124,7 +124,7 @@ pub(crate) fn serve() -> Result<(), String> {
             }
             "evaluate" => {
                 let expression = request.pointer("/arguments/expression").and_then(Value::as_str).unwrap_or("");
-                let frame_id = request.pointer("/arguments/frameId").and_then(Value::as_u64).unwrap_or(1);
+                let frame_id = request.pointer("/arguments/frameId").and_then(Value::as_u64).unwrap_or(1) as usize;
                 let result = session.as_ref()
                     .and_then(|active| active.evaluate_for_frame(frame_id, expression))
                     .map(|value| json!({"result":value.show(),"type":value_type(&value),"variablesReference":0}))
