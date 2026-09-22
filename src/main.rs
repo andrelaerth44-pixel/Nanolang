@@ -4,7 +4,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Ident(String), Number(f64), Text(String),
-    True, False, App, Function, Print, If, Else, Return,
+    True, False, Function, Print, If, Else, Return,
     Plus, Minus, Star, Slash, Equal, EqualEqual, BangEqual,
     Greater, GreaterEqual, Less, LessEqual,
     LeftParen, RightParen, LeftBrace, RightBrace, Comma, Eof,
@@ -95,7 +95,7 @@ impl Lexer {
         while matches!(self.peek(), Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) { self.advance(); }
         match self.src[start..self.pos].iter().collect::<String>().as_str() {
             "true" => Token::True, "false" => Token::False,
-            "app" => Token::App, "function" => Token::Function,
+            "function" => Token::Function,
             "print" => Token::Print, "if" => Token::If,
             "else" => Token::Else, "return" => Token::Return,
             s => Token::Ident(s.to_string()),
@@ -140,7 +140,7 @@ enum Stmt {
     Assign(String, Expr), Print(Expr), Expr(Expr),
     If(Expr, Vec<Stmt>, Vec<Stmt>),
     Function(String, Vec<String>, Vec<Stmt>),
-    Return(Expr), App(String, Vec<Stmt>),
+    Return(Expr),
 }
 
 struct Parser { tokens: Vec<Token>, pos: usize }
@@ -164,7 +164,6 @@ impl Parser {
     }
     fn statement(&mut self) -> Result<Stmt, String> {
         match self.peek() {
-            Token::App => self.app(),
             Token::Function => self.function(),
             Token::Print => { self.advance(); Ok(Stmt::Print(self.expression()?)) }
             Token::If => self.if_stmt(),
@@ -178,14 +177,6 @@ impl Parser {
             }
             _ => Ok(Stmt::Expr(self.expression()?)),
         }
-    }
-    fn app(&mut self) -> Result<Stmt, String> {
-        self.advance();
-        let name = match self.advance() {
-            Token::Ident(v) => v,
-            x => return Err(format!("Nano: nome do app esperado, encontrado {:?}", x)),
-        };
-        Ok(Stmt::App(name, self.block()?))
     }
     fn function(&mut self) -> Result<Stmt, String> {
         self.advance();
@@ -327,13 +318,6 @@ impl Runtime {
                 }
                 Ok(None)
             }
-            Stmt::App(n, body) => {
-                if n != "MainActivity" { eprintln!("Nano: app '{n}'"); }
-                for s in body {
-                    if let Some(v) = self.exec(s)? { return Ok(Some(v)); }
-                }
-                Ok(None)
-            }
         }
     }
 
@@ -341,7 +325,11 @@ impl Runtime {
         match e {
             Expr::Value(v) => Ok(v.clone()),
             Expr::Var(n) => self.vars.get(n).cloned().ok_or_else(|| format!("Nano: variável '{n}' não definida")),
-            Expr::Binary(a, op, b) => {\n                let left = self.eval(a)?;\n                let right = self.eval(b)?;\n                self.binary(left, *op, right)\n            },
+            Expr::Binary(a, op, b) => {
+                let left = self.eval(a)?;
+                let right = self.eval(b)?;
+                self.binary(left, *op, right)
+            },
             Expr::Call(name, args) => {
                 let (params, body) = self.functions.get(name).cloned().ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
                 if params.len() != args.len() { return Err(format!("Nano: '{name}' esperava {} argumentos", params.len())); }
@@ -398,12 +386,15 @@ fn cmp(a: Value, b: Value, f: fn(f64,f64)->bool) -> Result<Value,String> {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 || args[1] != "run" {
-        eprintln!("Nano 0.1 — uso: nano run arquivo.nano");
-        process::exit(2);
-    }
-    let path = &args[2];
-    let source = match fs::read_to_string(path) {
+    let path = match args.as_slice() {
+        [_, command] if command == "run" => "main.nano".to_string(),
+        [_, command, file] if command == "run" => file.clone(),
+        _ => {
+            eprintln!("Nano 0.1 — uso: nano run [arquivo.nano]");
+            process::exit(2);
+        }
+    };
+    let source = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => { eprintln!("Nano: não foi possível ler '{path}': {e}"); process::exit(1); }
     };
