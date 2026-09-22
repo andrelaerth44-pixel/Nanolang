@@ -128,6 +128,10 @@ jobs:
           cargo run --quiet --bin nano -- check selfhost/compiler.nano
           echo "=== PASS: selfhost/compiler.nano ==="
 
+          echo "=== Nano check: selfhost/semantic.nano ==="
+          cargo run --quiet --bin nano -- check selfhost/semantic.nano
+          echo "=== PASS: selfhost/semantic.nano ==="
+
       - name: Self-host bootstrap
         run: |
           cargo run --quiet --bin nano -- check selfhost/bootstrap.nano
@@ -138,6 +142,7 @@ jobs:
           grep -q "function add(a, b)" /tmp/nano-selfhost.ir
           grep -q "end_function" /tmp/nano-selfhost.ir
           grep -q "jump_if_false" /tmp/nano-selfhost.ir
+          grep -q "end_function" /tmp/nano-selfhost.ir
 
       - name: UI syntax check
         run: cargo run --quiet --bin nano -- check examples/ui.nano
