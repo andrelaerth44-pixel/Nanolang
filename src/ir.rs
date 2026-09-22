@@ -689,6 +689,10 @@ impl IrRuntime {
         let beta2 = 0.999_f32;
         let eps = 1e-8_f32;
 
+        self.sync_tensor_host(&param)?;
+        self.sync_tensor_host(&grad)?;
+        self.sync_tensor_host(&param)?;
+        self.sync_tensor_host(&grad)?;
         let mut data = param.borrow().data_f32();
         let gradient = grad.borrow().data_f32();
         for i in 0..data.len() {
@@ -719,29 +723,22 @@ impl IrRuntime {
             return Err("Nano: FMA requer tensors no dispositivo do backend ativo".into());
         }
 
-        let left_data=a.data_f32();let right_data=b.data_f32();let bias_data=c.data_f32();let shape=a.shape.clone();
+        let shape=a.shape.clone();
+        let dtype=DType::promote(DType::promote(a.dtype,b.dtype),c.dtype);
+        let requires_grad=a.requires_grad||b.requires_grad||c.requires_grad;
         let output_id=super::next_tensor_id();
-        let data=self.backend.fused_mul_add_resident(a.id,&left_data,b.id,&right_data,c.id,&bias_data,&shape,output_id)
+        let op=TensorOp::FusedMulAdd(std::rc::Rc::clone(&left_ref),std::rc::Rc::clone(&right_ref),std::rc::Rc::clone(&bias_ref));
+        if self.backend.kind()==backend::BackendKind::Gpu {
+            self.backend.fused_mul_add_resident_async(a.id,b.id,c.id,&shape,output_id)
+                .map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+            let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0;shape.iter().copied().product()],requires_grad,self.backend.kind(),dtype,op)?;
+            out.borrow_mut().mark_host_stale();
+            return Ok(Value::Tensor(out));
+        }
+        let data=self.backend.fused_mul_add(&a.data_f32(),&b.data_f32(),&c.data_f32(),&shape)
             .map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
-        let dtype = DType::promote(DType::promote(a.dtype, b.dtype), c.dtype);
-        let requires_grad = a.requires_grad || b.requires_grad || c.requires_grad;
-        drop(a);
-        drop(b);
-        drop(c);
-
-        Ok(Value::Tensor(super::Tensor::derived_dtype_on_with_id(
-            output_id,
-            data,
-            shape,
-            requires_grad,
-            self.backend.kind(),
-            dtype,
-            TensorOp::FusedMulAdd(
-                std::rc::Rc::clone(&left_ref),
-                std::rc::Rc::clone(&right_ref),
-                std::rc::Rc::clone(&bias_ref),
-            ),
-        )?))
+        drop(a);drop(b);drop(c);
+        Ok(Value::Tensor(super::Tensor::derived_dtype_on_with_id(output_id,data,shape,requires_grad,self.backend.kind(),dtype,op)?))
     }
 
     fn binary_value(&mut self, a: Value, op: Op, b: Value) -> Result<Value, String> {
@@ -947,20 +944,20 @@ fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Va
         return Err(format!("Nano: matmul() incompatível: {}x{} com {}x{}", m, k, k2, n));
     }
 
-    let (left_id,right_id,left_data,right_data)={let l=left.borrow();let r=right.borrow();(l.id,r.id,l.data_f32(),r.data_f32())};
     let output_id=super::next_tensor_id();
-    let out=backend.matmul_resident(left_id,&left_data,&lshape,right_id,&right_data,&rshape,output_id)
+    let op=TensorOp::Matmul(std::rc::Rc::clone(left),std::rc::Rc::clone(right));
+    let dtype=DType::promote(ldtype,rdtype);
+    if backend.kind()==backend::BackendKind::Gpu {
+        backend.matmul_resident_async(left.borrow().id,&lshape,right.borrow().id,&rshape,output_id)
+            .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+        let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0;m*n],requires_grad,backend.kind(),dtype,op)?;
+        out.borrow_mut().mark_host_stale();
+        return Ok(Value::Tensor(out));
+    }
+    let (left_data,right_data)={let l=left.borrow();let r=right.borrow();(l.data_f32(),r.data_f32())};
+    let out=backend.matmul(&left_data,&lshape,&right_data,&rshape)
         .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
-
-    Ok(Value::Tensor(super::Tensor::derived_dtype_on_with_id(
-        output_id,
-        out,
-        vec![m, n],
-        requires_grad,
-        backend.kind(),
-        DType::promote(ldtype, rdtype),
-        TensorOp::Matmul(std::rc::Rc::clone(left), std::rc::Rc::clone(right)),
-    )?))
+    Ok(Value::Tensor(super::Tensor::derived_dtype_on_with_id(output_id,out,vec![m,n],requires_grad,backend.kind(),dtype,op)?))
 }
 
 
@@ -991,42 +988,26 @@ fn tensor_elementwise(
         TensorOpKind::Mul => ElementwiseOp::Mul,
         TensorOpKind::Div => ElementwiseOp::Div,
     };
-    let left_id = left.id;
-    let right_id = right.id;
-    let left_data = left.data_f32();
-    let right_data = right.data_f32();
-    let shape = left.shape.clone();
-    let output_id = super::next_tensor_id();
-    let data = backend
-        .elementwise_resident(
-            left_id,
-            &left_data,
-            right_id,
-            &right_data,
-            &shape,
-            backend_op,
-            output_id,
-        )
-        .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
-
-    let requires_grad = left.requires_grad || right.requires_grad;
-    let dtype = DType::promote(left.dtype, right.dtype);
-    drop(left);
-    drop(right);
-
-    Ok(super::Tensor::derived_dtype_on_with_id(
-        output_id,
-        data,
-        shape,
-        requires_grad,
-        backend.kind(),
-        dtype,
-        TensorOp::Elementwise(
-            op,
-            std::rc::Rc::clone(a),
-            std::rc::Rc::clone(b),
-        ),
-    )?)
+    let left_id=left.id;
+    let right_id=right.id;
+    let shape=left.shape.clone();
+    let requires_grad=left.requires_grad||right.requires_grad;
+    let dtype=DType::promote(left.dtype,right.dtype);
+    let output_id=super::next_tensor_id();
+    let op_node=TensorOp::Elementwise(op,std::rc::Rc::clone(a),std::rc::Rc::clone(b));
+    if backend.kind()==backend::BackendKind::Gpu {
+        backend.elementwise_resident_async(left_id,right_id,&shape,backend_op,output_id)
+            .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+        drop(left);drop(right);
+        let elements=shape.iter().copied().product::<usize>();
+        let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0;elements],requires_grad,backend.kind(),dtype,op_node)?;
+        out.borrow_mut().mark_host_stale();
+        return Ok(out);
+    }
+    let data=backend.elementwise(&left.data_f32(),&right.data_f32(),&shape,backend_op)
+        .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+    drop(left);drop(right);
+    Ok(super::Tensor::derived_dtype_on_with_id(output_id,data,shape,requires_grad,backend.kind(),dtype,op_node)?)
 }
 
 fn reduce_value(
@@ -1046,20 +1027,24 @@ fn reduce_value(
             backend.kind().name()
         ));
     }
-    let result = backend.reduce(&borrowed.data_f32(), mean)
-        .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     let op = if mean { TensorOp::Mean(std::rc::Rc::clone(&tensor)) } else { TensorOp::Sum(std::rc::Rc::clone(&tensor)) };
-    let requires_grad = borrowed.requires_grad;
-    let dtype = borrowed.dtype;
+    let requires_grad=borrowed.requires_grad;
+    let dtype=borrowed.dtype;
+    let input_id=borrowed.id;
+    let elements=borrowed.data_len();
+    if backend.kind()==backend::BackendKind::Gpu {
+        let output_id=super::next_tensor_id();
+        backend.reduce_resident_async(input_id,elements,mean,output_id)
+            .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+        drop(borrowed);
+        let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0],requires_grad,backend.kind(),dtype,op)?;
+        out.borrow_mut().mark_host_stale();
+        return Ok(Value::Tensor(out));
+    }
+    let result=backend.reduce(&borrowed.data_f32(),mean)
+        .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
     drop(borrowed);
-    Ok(Value::Tensor(super::Tensor::derived_dtype_on(
-        vec![result],
-        vec![1],
-        requires_grad,
-        backend.kind(),
-        dtype,
-        op,
-    )?))
+    Ok(Value::Tensor(super::Tensor::derived_dtype_on(vec![result],vec![1],requires_grad,backend.kind(),dtype,op)?))
 }
 
 fn gradient_value(loss: &Value, parameter: &Value, backend: &dyn TensorBackend) -> Result<Value, String> {
