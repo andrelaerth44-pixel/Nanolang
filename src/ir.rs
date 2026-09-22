@@ -502,7 +502,7 @@ impl IrRuntime {
 
         if name == "fs_exists" {
             if args.len() != 1 { return Err("Nano: fs_exists() recebe caminho".into()); }
-            return Ok(Value::Boolean(text_arg(&args[0], "caminho")?.as_path().exists()));
+            let path = text_arg(&args[0], "caminho")?;\n            return Ok(Value::Boolean(Path::new(&path).exists()));
         }
 
         if name == "fs_list" {
