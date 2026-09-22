@@ -211,9 +211,10 @@ pub(crate) struct GpuBackend {
 impl GpuBackend {
     pub(crate) fn new() -> Result<Self, BackendError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let force_fallback = std::env::var_os("NANO_GPU_FALLBACK").is_some();
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
+            force_fallback_adapter: force_fallback,
             compatible_surface: None,
             apply_limit_buckets: false,
         }))
@@ -714,5 +715,29 @@ mod tests {
         assert!(!super::MATMUL_SHADER.is_empty());
         assert!(!super::ELEMENTWISE_SHADER.is_empty());
         assert!(!super::REDUCE_SHADER.is_empty());
+    }
+
+    #[test]
+    fn gpu_matmul_can_execute_with_fallback_adapter() {
+        if std::env::var_os("NANO_GPU_E2E").is_none() {
+            return;
+        }
+
+        std::env::set_var("NANO_GPU_FALLBACK", "1");
+        let backend = super::GpuBackend::new().expect("wgpu fallback adapter");
+        let output = backend
+            .matmul(
+                &[1.0, 2.0, 3.0, 4.0],
+                &[2, 2],
+                &[5.0, 6.0, 7.0, 8.0],
+                &[2, 2],
+            )
+            .expect("GPU matmul");
+
+        assert_eq!(output.len(), 4);
+        assert!((output[0] - 19.0).abs() < 1e-4);
+        assert!((output[1] - 22.0).abs() < 1e-4);
+        assert!((output[2] - 43.0).abs() < 1e-4);
+        assert!((output[3] - 50.0).abs() < 1e-4);
     }
 }
