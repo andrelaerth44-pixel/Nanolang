@@ -899,6 +899,24 @@ impl Semantic {
             }
         }
 
+        // Imports are loaded at runtime by IrRuntime::load_module(), so register
+        // their exported function names here before validating call targets.
+        for stmt in program {
+            let Stmt::Use(path) = stmt else { continue; };
+            if path.starts_with("std.") {
+                continue;
+            }
+            let source = fs::read_to_string(path)
+                .map_err(|e| format!("Nano: não foi possível carregar módulo '{path}' para análise semântica: {e}"))?;
+            let tokens = Lexer::new(&source).lex()?;
+            let imported = Parser::new(tokens).program()?;
+            for item in imported {
+                if let Stmt::Function(name, params, _) = item {
+                    self.functions.entry(name).or_insert((params.len(), Type::Any));
+                }
+            }
+        }
+
         for stmt in program {
             if let Stmt::Function(name, params, body) = stmt {
                 self.check_function(name, params, body)?;
