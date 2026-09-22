@@ -895,11 +895,14 @@ fn parse_cli(args: &[String]) -> Result<(String, Option<backend::BackendKind>), 
                 index += 1;
                 let value = args.get(index)
                     .ok_or_else(|| "Nano: --backend requer cpu ou gpu".to_string())?;
-                selected_backend = Some(backend::BackendKind::parse(value)?);
+                selected_backend = Some(
+                    backend::BackendKind::parse(value).map_err(|e| e.to_string())?
+                );
             }
             value if value.starts_with("--backend=") => {
                 selected_backend = Some(
-                    backend::BackendKind::parse(value.trim_start_matches("--backend="))?
+                    backend::BackendKind::parse(value.trim_start_matches("--backend="))
+                        .map_err(|e| e.to_string())?
                 );
             }
             value if value.starts_with('-') => {
