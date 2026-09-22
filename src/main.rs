@@ -14,7 +14,7 @@ mod http;
 mod selfhost_native;
 mod dap;
 
-use std::{cell::RefCell, env, fs, io::{self, BufRead, Write}, path::{Path, PathBuf}, process::{self, Stdio}, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
+use std::{cell::RefCell, env, fs, io::{self, BufRead, Write}, path::{Path, PathBuf}, process::{self, Command, Stdio}, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
 use dtype::DType;
 use half::{bf16, f16};
