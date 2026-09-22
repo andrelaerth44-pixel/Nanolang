@@ -26,6 +26,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+const FMA_SHADER: &str = r#"
+struct Params { len: u32, _pad0: u32, _pad1: u32, _pad2: u32 };
+@group(0) @binding(0) var<storage, read> left: array<f32>;
+@group(0) @binding(1) var<storage, read> right: array<f32>;
+@group(0) @binding(2) var<storage, read> bias: array<f32>;
+@group(0) @binding(3) var<storage, read_write> out: array<f32>;
+@group(0) @binding(4) var<uniform> params: Params;
+
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.len) { return; }
+    out[i] = left[i] * right[i] + bias[i];
+}
+"#;
+
 const ELEMENTWISE_SHADER: &str = r#"
 struct Params { len: u32, op: u32, _pad0: u32, _pad1: u32 };
 @group(0) @binding(0) var<storage, read> left: array<f32>;
@@ -69,6 +85,7 @@ pub(crate) struct GpuBackend {
     queue: wgpu::Queue,
     matmul: wgpu::ComputePipeline,
     elementwise: wgpu::ComputePipeline,
+    fma: wgpu::ComputePipeline,
     reduce: wgpu::ComputePipeline,
     planner: MemoryPlanner,
 }
@@ -105,6 +122,7 @@ impl GpuBackend {
         };
         let matmul_module = make_shader("nano-matmul", MATMUL_SHADER);
         let elementwise_module = make_shader("nano-elementwise", ELEMENTWISE_SHADER);
+        let fma_module = make_shader("nano-fma", FMA_SHADER);
         let reduce_module = make_shader("nano-reduce", REDUCE_SHADER);
 
         Ok(Self {
@@ -112,6 +130,7 @@ impl GpuBackend {
             queue,
             matmul: make_pipeline("nano-matmul-pipeline", &matmul_module),
             elementwise: make_pipeline("nano-elementwise-pipeline", &elementwise_module),
+            fma: make_pipeline("nano-fma-pipeline", &fma_module),
             reduce: make_pipeline("nano-reduce-pipeline", &reduce_module),
             planner: MemoryPlanner::new(),
         })

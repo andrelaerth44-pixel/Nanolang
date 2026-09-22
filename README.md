@@ -87,7 +87,7 @@ A seleção de `gpu` já existe na CLI, mas o backend GPU real ainda não está 
 
 Quando `run` for executado dentro de um projeto sem arquivo explícito, a convenção será procurar automaticamente por `main.nano`.
 
-## Nano 0.8
+## Nano 0.9
 
 O núcleo atual contém:
 
@@ -111,7 +111,9 @@ O núcleo atual contém:
 - módulos com `use`;
 - tipo nativo `Tensor`;
 - `tensor()`, `parameter()`, `zeros()`, `shape()`, `matmul()`, `sum()` e `mean()`;
-- introspecção com `backend()` e `device()`;
+- introspecção com `backend()`, `device()`, `dtype()` e `memory_bytes()`;
+- `cast()` entre `f32`, `f16` e `bf16`;
+- storage compacto para `f16` e `bf16`;
 - seleção explícita de backend no CLI;
 - autograd com `grad()`;
 - atualização de parâmetros com `step()`;
@@ -123,7 +125,7 @@ O núcleo atual contém:
 
 A regra é: capacidades novas não devem transformar Nano numa linguagem cheia de declarações obrigatórias.
 
-O próximo foco é transformar o Tensor em uma infraestrutura de computação real: operações vetorizadas, tipos de precisão, otimização do grafo, memória planejada, transferência entre dispositivos e backends GPU reais.
+Tensor agora possui storage compacto `f32/f16/bf16`, seleção de backend, planner de memória, caminho de transferência e kernels GPU reais. Expressões do padrão `a * b + c` também podem ser emitidas como uma operação FMA única, evitando duas passagens elementwise.
 
 A meta de engenharia é permitir código Nano muito curto para dados e IA. Suporte a treinamento de modelos muito grandes, incluindo uma classe de 5 bilhões de parâmetros, será tratado como uma meta de backend e memória — não como uma promessa de que a VM atual já consegue fazer isso em qualquer GPU.
 
@@ -198,3 +200,14 @@ IrRuntime
 
 Isso cria uma fronteira real entre a linguagem e o backend. A VM atual serve como etapa inicial; a mesma representação poderá futuramente alimentar backends nativos para CPU, GPU e NPU.
 
+
+
+### GPU e fusão
+
+O backend GPU usa compute shaders WGSL via wgpu. A primeira implementação é síncrona e faz upload/readback por operação; a próxima otimização é manter buffers residentes no dispositivo entre kernels.
+
+O compilador já reconhece `a * b + c` e `c + a * b` como FMA no IR. Isso cria uma fronteira para futuras fusões de cadeias maiores sem mudar a sintaxe do Nano.
+
+### Self-host
+
+O roteiro de `SELF_HOST.md` agora é verificável por estágios: primeiro front-end mínimo em Nano, depois bootstrap duplo contra uma IR normalizada e, por fim, compilação do próprio compilador.

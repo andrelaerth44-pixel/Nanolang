@@ -13,6 +13,7 @@ pub(crate) enum IrInst {
     Load(String),
     Store(String),
     Binary(Op),
+    FusedMulAdd,
     MakeList(usize),
     MakeObject(Vec<String>),
     Index,
@@ -240,6 +241,23 @@ impl Compiler {
                 }
                 code.push(IrInst::MakeObject(keys));
             }
+            Expr::Binary(left, Op::Add, right) => {
+                if let Expr::Binary(a, Op::Mul, b) = &**left {
+                    self.compile_expr(a, code)?;
+                    self.compile_expr(b, code)?;
+                    self.compile_expr(right, code)?;
+                    code.push(IrInst::FusedMulAdd);
+                } else if let Expr::Binary(a, Op::Mul, b) = &**right {
+                    self.compile_expr(a, code)?;
+                    self.compile_expr(b, code)?;
+                    self.compile_expr(left, code)?;
+                    code.push(IrInst::FusedMulAdd);
+                } else {
+                    self.compile_expr(left, code)?;
+                    self.compile_expr(right, code)?;
+                    code.push(IrInst::Binary(Op::Add));
+                }
+            }
             Expr::Binary(left, op, right) => {
                 self.compile_expr(left, code)?;
                 self.compile_expr(right, code)?;
@@ -328,6 +346,12 @@ impl IrRuntime {
                     let right = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando direito".to_string())?;
                     let left = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando esquerdo".to_string())?;
                     stack.push(self.binary_value(left, *op, right)?);
+                }
+                IrInst::FusedMulAdd => {
+                    let bias = stack.pop().ok_or_else(|| "Nano IR: stack vazia no bias do FMA".to_string())?;
+                    let right = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando direito do FMA".to_string())?;
+                    let left = stack.pop().ok_or_else(|| "Nano IR: stack vazia no operando esquerdo do FMA".to_string())?;
+                    stack.push(self.fused_mul_add_value(left, right, bias)?);
                 }
                 IrInst::MakeList(count) => {
                     let mut values = pop_n(&mut stack, *count)?;
@@ -644,6 +668,46 @@ impl IrRuntime {
         param.borrow_mut().set_data_f32(data);
 
         Ok(Value::Tensor(std::rc::Rc::clone(&param)))
+    }
+
+    fn fused_mul_add_value(&mut self, left: Value, right: Value, bias: Value) -> Result<Value, String> {
+        let (left_ref, right_ref, bias_ref) = match (left, right, bias) {
+            (Value::Tensor(a), Value::Tensor(b), Value::Tensor(c)) => (a, b, c),
+            _ => return Err("Nano: FMA requer Tensor, Tensor, Tensor".into()),
+        };
+
+        let a = left_ref.borrow();
+        let b = right_ref.borrow();
+        let c = bias_ref.borrow();
+        if a.shape != b.shape || a.shape != c.shape {
+            return Err("Nano: FMA requer tensors com shapes iguais".into());
+        }
+        if a.device != self.backend.kind() || b.device != self.backend.kind() || c.device != self.backend.kind() {
+            return Err("Nano: FMA requer tensors no dispositivo do backend ativo".into());
+        }
+
+        let data = self.backend
+            .fused_mul_add(&a.data_f32(), &b.data_f32(), &c.data_f32(), &a.shape)
+            .map_err(|e| format!("Nano: backend {}: {}", self.backend.kind().name(), e))?;
+        let shape = a.shape.clone();
+        let dtype = DType::promote(DType::promote(a.dtype, b.dtype), c.dtype);
+        let requires_grad = a.requires_grad || b.requires_grad || c.requires_grad;
+        drop(a);
+        drop(b);
+        drop(c);
+
+        Ok(Value::Tensor(super::Tensor::derived_dtype_on(
+            data,
+            shape,
+            requires_grad,
+            self.backend.kind(),
+            dtype,
+            TensorOp::FusedMulAdd(
+                std::rc::Rc::clone(&left_ref),
+                std::rc::Rc::clone(&right_ref),
+                std::rc::Rc::clone(&bias_ref),
+            ),
+        )?))
     }
 
     fn binary_value(&mut self, a: Value, op: Op, b: Value) -> Result<Value, String> {
@@ -1060,7 +1124,19 @@ fn backward(
             let size = input.borrow().data_len().max(1);
             backward(&input, vec![scalar / size as f32; size], grads)
         }
-        TensorOp::Matmul(left, right) => {
+        TensorOp::FusedMulAdd(left, right, bias) => {
+            let (ldata, rdata) = {
+                let l = left.borrow();
+                let r = right.borrow();
+                (l.data_f32(), r.data_f32())
+            };
+            let lg = upstream.iter().zip(&rdata).map(|(u, r)| u * r).collect();
+            let rg = upstream.iter().zip(&ldata).map(|(u, l)| u * l).collect();
+            backward(&left, lg, grads)?;
+            backward(&right, rg, grads)?;
+            backward(&bias, upstream, grads)
+        }
+                TensorOp::Matmul(left, right) => {
             let upstream_shape = node.borrow().shape.clone();
             if upstream_shape.len() != 2 {
                 return Err("Nano: grad matmul requer saída 2D".into());

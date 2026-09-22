@@ -58,6 +58,14 @@ pub(crate) trait TensorBackend {
         op: ElementwiseOp,
     ) -> Result<Vec<f32>, BackendError>;
 
+    fn fused_mul_add(
+        &self,
+        left: &[f32],
+        right: &[f32],
+        bias: &[f32],
+        shape: &[usize],
+    ) -> Result<Vec<f32>, BackendError>;
+
     fn reduce(&self, data: &[f32], mean: bool) -> Result<f32, BackendError>;
     fn transfer(&self, data: &[f32]) -> Result<Vec<f32>, BackendError>;
 }
@@ -134,6 +142,24 @@ impl TensorBackend for CpuBackend {
         }).collect())
     }
 
+    fn fused_mul_add(
+        &self,
+        left: &[f32],
+        right: &[f32],
+        bias: &[f32],
+        shape: &[usize],
+    ) -> Result<Vec<f32>, BackendError> {
+        let expected = shape.iter().copied().product::<usize>();
+        if left.len() != expected || right.len() != expected || bias.len() != expected {
+            return Err(BackendError("fused_mul_add CPU recebeu buffers incompatíveis com o shape".into()));
+        }
+        Ok(left.iter()
+            .zip(right)
+            .zip(bias)
+            .map(|((a, b), c)| a.mul_add(*b, *c))
+            .collect())
+    }
+
     fn reduce(&self, data: &[f32], mean: bool) -> Result<f32, BackendError> {
         if data.is_empty() {
             return Ok(0.0);
@@ -191,10 +217,21 @@ mod tests {
     }
 
     #[test]
-    fn gpu_backend_is_explicitly_unavailable() {
-        match create(BackendKind::Gpu) {
-            Err(error) => assert!(error.to_string().contains("GPU")),
-            Ok(_) => panic!("GPU backend não deveria existir ainda"),
-        }
+    fn cpu_fused_mul_add_is_correct() {
+        let backend = CpuBackend;
+        let out = backend
+            .fused_mul_add(
+                &[1.0, 2.0, 3.0],
+                &[4.0, 5.0, 6.0],
+                &[7.0, 8.0, 9.0],
+                &[3],
+            )
+            .unwrap();
+        assert_eq!(out, vec![11.0, 18.0, 27.0]);
+    }
+
+    #[test]
+    fn gpu_backend_is_registered() {
+        assert_eq!(BackendKind::Gpu.name(), "gpu");
     }
 }
