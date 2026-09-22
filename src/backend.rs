@@ -187,7 +187,9 @@ mod tests {
 
     #[test]
     fn gpu_backend_is_explicitly_unavailable() {
-        let error = create(BackendKind::Gpu).unwrap_err();
-        assert!(error.to_string().contains("GPU"));
+        match create(BackendKind::Gpu) {
+            Err(error) => assert!(error.to_string().contains("GPU")),
+            Ok(_) => panic!("GPU backend não deveria existir ainda"),
+        }
     }
 }
