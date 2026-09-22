@@ -698,7 +698,7 @@ fn main() {
         [_, command] if command == "run" => "main.nano".to_string(),
         [_, command, file] if command == "run" => file.clone(),
         _ => {
-            eprintln!("Nano 0.4 — uso: nano run [arquivo.nano]");
+            eprintln!("Nano 0.5 — uso: nano run [arquivo.nano]");
             process::exit(2);
         }
     };
