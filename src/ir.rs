@@ -559,6 +559,8 @@ impl IrRuntime {
             "std.net.tcp_send" => "net_tcp_send",
             "std.net.tcp_recv" => "net_tcp_recv",
             "std.net.tcp_close" => "net_tcp_close",
+            "std.net.http_get" => "net_http_get",
+            "std.http.get" => "net_http_get",
             "std.env.get" => "env_get",
             "std.env.set" => "env_set",
             "std.math.abs" => "abs",
