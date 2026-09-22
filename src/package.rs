@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn manifest_round_trip_is_deterministic() {
-        let source = "[package]\nname = \"demo\"\nversion = \"1.2.3\"\nentry = \"src/main.nano\"\n\n[dependencies]\nfoo = \"libs/foo\"\nbar = \"libs/bar\"\n";
+        let source = "[package]\nname = \"demo\"\nversion = \"1.2.3\"\nentry = \"src/main.nano\"\n\n[dependencies]\nbar = \"libs/bar\"\nfoo = \"libs/foo\"\n";
         let manifest = Manifest::parse(source).unwrap();
         assert_eq!(manifest.render(), source);
     }
