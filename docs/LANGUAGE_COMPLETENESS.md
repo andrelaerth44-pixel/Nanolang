@@ -1,36 +1,35 @@
 # Nano language completion contract
 
-Nano is being finished in layers. A language is not considered complete merely because the parser accepts more keywords; the compiler, runtime, tooling and standard library must agree on the same language contract.
+Este documento acompanha a implementação real. Um recurso só é considerado concluído quando frontend, IR, runtime, tooling, testes e backend compatível concordam no mesmo contrato.
 
-## Completed foundation
+## Implementado
 
-- `.nano` source files and `main.nano` entry point
-- lexer, parser and semantic checking
-- inferred types, variables, expressions and blocks
-- functions, returns, conditionals and loops
-- lists, objects, indexing and field access
-- modules with `use`
-- Nano IR and optimizer
-- CPU runtime
-- Tensor, autograd, SGD and Adam
-- CPU/GPU backend abstraction
-- real wgpu compute backend
-- resident GPU tensor execution
-- resident GPU backward/gradient operations
-- resident GPU optimizer updates
-- explicit GPU readback
-- compact f32/f16/bf16 storage
-- CLI backend/dtype selection
-- CI with cargo check and cargo test
-- editor-independent TextMate syntax highlighting
+- .nano + main.nano como entrypoint convencional.
+- Lexer, parser, semantic checker e IR.
+- Variáveis, inferência de tipos, funções, retornos, condicionais, loops e break.
+- Listas, objetos, indexação, atribuição por índice/campo.
+- Operadores unários, comparação, %, && e || com short-circuit.
+- Function values e chamadas indiretas.
+- use e namespaces std.*.
+- Result helpers: ok, err, is_ok, unwrap, error.
+- Tensor, autograd, SGD e Adam.
+- CPU e GPU wgpu, incluindo caminhos residentes.
+- NPU provider ABI v1 + provider de referência.
+- Filesystem, ambiente, processos, TCP, HTTP, tempo, threads, tasks e canais.
+- UI desktop nativa com eventos básicos.
+- Formatter, linter, package manager, test runner e CLI.
+- LSP interativo com completion, hover, definition, references, rename, signature help, document symbols, formatting, diagnostics e Quick Fixes.
+- Self-host bootstrap: lexer, parser, compiler e bootstrap em Nano.
+- CI end-to-end para native CPU, NPU, self-host, package e integration tests.
 
-## Remaining engineering contract
+## Hardening que continua
 
-1. Toolchain: formatter, linter, source locations/diagnostics, package metadata, reproducible builds and LSP.
-2. Language surface: richer assignment targets, unary/logical operators, richer strings, first-class functions/closures, explicit error/result handling and a stable standard library.
-3. Runtime: filesystem, processes, networking, concurrency/tasks, timers/events and application/UI primitives.
-4. Native execution: native CPU code generation, broader GPU kernels, NPU backend, graph-level memory planning, command batching, true low-precision GPU arithmetic and multi-device execution.
-5. Self-host: Nano lexer/parser/AST/IR, double bootstrap and compiler self-compilation.
-6. Application framework: UI, input/events, rendering, assets and packaging/deployment.
-
-This checklist is finite and testable. It is the contract that separates the current bootstrap compiler from a mature application platform.
+1. Diagnósticos LSP ainda precisam convergir para o mesmo parser/semantic engine do compilador em vez de manter uma análise lexical independente.
+2. O formatter pode ganhar preservação de mais trivia e regras de estilo adicionais.
+3. O native CPU precisa ampliar o subconjunto para coleções, objetos, Tensor e APIs de runtime, além do atual caminho escalar.
+4. GPU ainda precisa de validação numérica end-to-end de treino, scheduler/liveness global, batching de command encoders, low precision aritmética nativa e multi-device.
+5. NPU depende de providers de hardware/SDK; a ABI e o provider de referência já existem.
+6. Self-host precisa sair de IR textual para bootstrap duplo e auto-compilação do próprio compilador.
+7. UI ainda precisa de rendering/input/assets além da janela e eventos básicos.
+8. Package manager precisa evoluir de dependências locais para resolução e distribuição reproduzíveis.
+9. Debugger, source maps e diagnósticos com spans ainda são trabalho de toolchain.
