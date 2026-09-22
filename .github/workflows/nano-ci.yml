@@ -147,10 +147,16 @@ jobs:
           cargo run --quiet --bin nano -- lint examples/native.nano
           cargo run --quiet --bin nano -- lint selfhost/bootstrap.nano
 
+      - name: Formatter check
+        run: cargo run --quiet --bin nano-fmt -- --check examples
+
       - name: Package toolchain
         run: |
-          rm -rf /tmp/nano-package
+          rm -rf /tmp/nano-package /tmp/nano-package-lib
+          mkdir -p /tmp/nano-package-lib
           cargo run --quiet --bin nano -- package init /tmp/nano-package
+          cargo run --quiet --bin nano -- package add local=/tmp/nano-package-lib /tmp/nano-package
+          cargo run --quiet --bin nano -- package remove local /tmp/nano-package
           cargo run --quiet --bin nano -- package lock /tmp/nano-package
           cargo run --quiet --bin nano -- package verify /tmp/nano-package
 
