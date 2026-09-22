@@ -1,0 +1,6 @@
+function add(a, b) {
+    return a + b
+}
+
+f = add
+print f(2, 3)
