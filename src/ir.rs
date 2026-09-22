@@ -1050,6 +1050,45 @@ fn reduce_value(
     Ok(Value::Tensor(super::Tensor::derived_dtype_on(vec![result],vec![1],requires_grad,backend.kind(),dtype,op)?))
 }
 
+fn sync_graph_host(
+    node: &TensorRef,
+    backend: &dyn TensorBackend,
+    seen: &mut HashSet<u64>,
+) -> Result<(), String> {
+    let (id, valid, elements, op) = {
+        let t=node.borrow();
+        (t.id,t.host_valid,t.data_len(),t.op.clone())
+    };
+    if !seen.insert(id) { return Ok(()); }
+
+    if backend.kind()==backend::BackendKind::Gpu && !valid {
+        let data=backend.read_tensor(id,elements)
+            .map_err(|e|format!("Nano: readback {}: {}",backend.kind().name(),e))?;
+        node.borrow_mut().set_data_f32(data);
+    }
+
+    match op {
+        TensorOp::Leaf => {}
+        TensorOp::Elementwise(_,left,right) => {
+            sync_graph_host(&left,backend,seen)?;
+            sync_graph_host(&right,backend,seen)?;
+        }
+        TensorOp::Matmul(left,right) => {
+            sync_graph_host(&left,backend,seen)?;
+            sync_graph_host(&right,backend,seen)?;
+        }
+        TensorOp::FusedMulAdd(left,right,bias) => {
+            sync_graph_host(&left,backend,seen)?;
+            sync_graph_host(&right,backend,seen)?;
+            sync_graph_host(&bias,backend,seen)?;
+        }
+        TensorOp::Sum(input) | TensorOp::Mean(input) => {
+            sync_graph_host(&input,backend,seen)?;
+        }
+    }
+    Ok(())
+}
+
 fn gradient_value(loss: &Value, parameter: &Value, backend: &dyn TensorBackend) -> Result<Value, String> {
     let loss_ref = match loss {
         Value::Tensor(t) => std::rc::Rc::clone(t),
@@ -1060,10 +1099,12 @@ fn gradient_value(loss: &Value, parameter: &Value, backend: &dyn TensorBackend) 
         _ => return Err("Nano: grad() requer Tensor como parâmetro".into()),
     };
 
-    let output_shape = param_ref.borrow().shape.clone();
-    let mut grads: HashMap<u64, Vec<f32>> = HashMap::new();
-    let upstream = vec![1.0_f32; loss_ref.borrow().data_len()];
-    backward(&loss_ref, upstream, &mut grads)?;
+    let output_shape=param_ref.borrow().shape.clone();
+    let mut seen=HashSet::new();
+    sync_graph_host(&loss_ref,backend,&mut seen)?;
+    let mut grads: HashMap<u64,Vec<f32>>=HashMap::new();
+    let upstream=vec![1.0_f32;loss_ref.borrow().data_len()];
+    backward(&loss_ref,upstream,&mut grads)?;
 
     let id = param_ref.borrow().id;
     let data = grads.get(&id).cloned().unwrap_or_else(|| vec![0.0; param_ref.borrow().data_len()]);
