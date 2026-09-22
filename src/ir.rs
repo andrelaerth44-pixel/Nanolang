@@ -717,6 +717,17 @@ impl IrRuntime {
                     let value = self.call(name, args)?;
                     stack.push(value);
                 }
+                IrInst::CallValue(count) => {
+                    let mut args = pop_n(&mut stack, *count)?;
+                    args.reverse();
+                    let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no alvo da chamada".to_string())?;
+                    let name = match target {
+                        Value::Function(name) => name,
+                        _ => return Err("Nano: alvo da chamada não é uma Function".into()),
+                    };
+                    let value = self.call(&name, args)?;
+                    stack.push(value);
+                }
                 IrInst::Print => {
                     let value = stack.pop().ok_or_else(|| "Nano IR: stack vazia em Print".to_string())?;
                     println!("{}", value.show());
