@@ -9,6 +9,7 @@ use crate::{ir::{IrInst, IrProgram}, Op, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
+    Unknown,
     Number,
     Boolean,
     Text,
@@ -21,22 +22,97 @@ pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
     }
 
     let mut module = NativeModule::new();
+    let mut function_params = HashMap::<String, Vec<Kind>>::new();
     let mut function_returns = HashMap::<String, Kind>::new();
     for (name, function) in &ir.functions {
-        let locals = initial_locals(&function.params, &function.code)?;
-        let (_, _, _, return_kind) = analyze_stack(
-            &function.code,
-            name,
-            &locals,
-            &function.params,
-            &function_returns,
-        )?;
-        function_returns.insert(name.clone(), return_kind.unwrap_or(Kind::Number));
+        function_params.insert(name.clone(), vec![Kind::Unknown; function.params.len()]);
+        function_returns.insert(name.clone(), Kind::Unknown);
     }
 
-    module.compile_function("_main", &ir.code, &[], &function_returns)?;
+    for _ in 0..16 {
+        let mut changed = false;
+
+        for (name, function) in &ir.functions {
+            let params = function_params.get(name).cloned().unwrap_or_default();
+            let locals = initial_locals(&function.params, &function.code)?;
+            let (_, _, _, return_kind, calls) = analyze_stack(
+                &function.code,
+                name,
+                &locals,
+                &function.params,
+                &params,
+                &function_returns,
+            )?;
+
+            if let Some(kind) = return_kind.filter(|kind| *kind != Kind::Unknown) {
+                let previous = function_returns.get(name).copied().unwrap_or(Kind::Unknown);
+                let merged = merge_kind(previous, kind).map_err(|_| {
+                    format!("Nano native: função '{name}' possui retornos incompatíveis")
+                })?;
+                if merged != previous {
+                    function_returns.insert(name.clone(), merged);
+                    changed = true;
+                }
+            }
+
+            for (callee, args) in calls {
+                let Some(target) = function_params.get_mut(&callee) else { continue; };
+                if target.len() != args.len() { continue; }
+                for (index, kind) in args.into_iter().enumerate() {
+                    let previous = target[index];
+                    let merged = merge_kind(previous, kind).map_err(|_| {
+                        format!("Nano native: argumento {} de '{callee}' recebe tipos incompatíveis", index + 1)
+                    })?;
+                    if merged != previous {
+                        target[index] = merged;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        let main_locals = initial_locals(&[], &ir.code)?;
+        let (_, _, _, _, calls) = analyze_stack(
+            &ir.code,
+            "_main",
+            &main_locals,
+            &[],
+            &[],
+            &function_returns,
+        )?;
+        for (callee, args) in calls {
+            let Some(target) = function_params.get_mut(&callee) else { continue; };
+            if target.len() != args.len() { continue; }
+            for (index, kind) in args.into_iter().enumerate() {
+                let previous = target[index];
+                let merged = merge_kind(previous, kind).map_err(|_| {
+                    format!("Nano native: argumento {} de '{callee}' recebe tipos incompatíveis", index + 1)
+                })?;
+                if merged != previous {
+                    target[index] = merged;
+                    changed = true;
+                }
+            }
+        }
+
+        if !changed { break; }
+    }
+
+    for (name, params) in &function_params {
+        if params.iter().any(|kind| *kind == Kind::Unknown) {
+            return Err(format!("Nano native: não foi possível inferir os tipos dos parâmetros de '{name}'"));
+        }
+    }
+    for (name, kind) in &function_returns {
+        if *kind == Kind::Unknown {
+            return Err(format!("Nano native: não foi possível inferir o tipo de retorno de '{name}'"));
+        }
+    }
+
+    module.compile_function("_main", &ir.code, &[], &[], &function_returns)?;
     for (name, function) in &ir.functions {
-        module.compile_function(name, &function.code, &function.params, &function_returns)?;
+        let params = function_params.get(name).cloned().unwrap_or_default();
+        module.compile_function(name, &function.code, &function.params, &params, &function_returns)?;
     }
 
     let assembly = module.render();
@@ -83,12 +159,13 @@ impl NativeModule {
         name: &str,
         code: &[IrInst],
         params: &[String],
+        param_kinds: &[Kind],
         function_returns: &HashMap<String, Kind>,
     ) -> Result<(), String> {
         let symbol = format!("nano_fn_{}", sanitize(name));
         let locals = initial_locals(params, code)?;
-        let (entry_states, max_stack, _local_kinds, _return_kind) =
-            analyze_stack(code, name, &locals, params, function_returns)?;
+        let (entry_states, max_stack, _local_kinds, _return_kind, _calls) =
+            analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
 
         let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
@@ -98,11 +175,35 @@ impl NativeModule {
         self.text.push_str(&frame.to_string());
         self.text.push_str(", %rsp\n");
 
-        for index in 0..params.len() {
-            self.text.push_str(&format!(
-                "    movsd %xmm{index}, {}(%rbp)\n",
-                local_offset(index)
-            ));
+        if param_kinds.len() != params.len() {
+            return Err(format!("Nano native: assinatura inconsistente de '{name}'"));
+        }
+        let float_regs = ["%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"];
+        let int_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9", "%r10", "%r11"];
+        let mut float_index = 0usize;
+        let mut int_index = 0usize;
+        for (index, kind) in param_kinds.iter().copied().enumerate() {
+            match kind {
+                Kind::Number | Kind::Boolean => {
+                    self.text.push_str(&format!(
+                        "    movsd {}, {}(%rbp)\n",
+                        float_regs[float_index],
+                        local_offset(index)
+                    ));
+                    float_index += 1;
+                }
+                Kind::Text | Kind::Function => {
+                    self.text.push_str(&format!(
+                        "    movq {}, {}(%rbp)\n",
+                        int_regs[int_index],
+                        local_offset(index)
+                    ));
+                    int_index += 1;
+                }
+                Kind::Unknown => {
+                    return Err(format!("Nano native: tipo de parâmetro desconhecido em '{name}'"));
+                }
+            }
         }
 
         let labels: HashMap<usize, String> = (0..code.len())
@@ -152,16 +253,19 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match kind {
-                        Kind::Function => self.text.push_str(&format!(
+                        Kind::Text | Kind::Function => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
                             local_offset(index),
                             stack_offset(depth)
                         )),
-                        _ => self.text.push_str(&format!(
+                        Kind::Number | Kind::Boolean => self.text.push_str(&format!(
                             "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
                             local_offset(index),
                             stack_offset(depth)
                         )),
+                        Kind::Unknown => {
+                            return Err(format!("Nano native: tipo desconhecido ao carregar '{var}' em '{name}'"));
+                        }
                     }
                 }
                 IrInst::Store(var) => {
@@ -170,16 +274,19 @@ impl NativeModule {
                     let index = *locals.get(var).unwrap();
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match kind {
-                        Kind::Function => self.text.push_str(&format!(
+                        Kind::Text | Kind::Function => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
                             stack_offset(slot),
                             local_offset(index)
                         )),
-                        _ => self.text.push_str(&format!(
+                        Kind::Number | Kind::Boolean => self.text.push_str(&format!(
                             "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
                             stack_offset(slot),
                             local_offset(index)
                         )),
+                        Kind::Unknown => {
+                            return Err(format!("Nano native: tipo desconhecido ao armazenar '{var}' em '{name}'"));
+                        }
                     }
                 }
                 IrInst::Binary(op) => {
@@ -274,8 +381,30 @@ impl NativeModule {
                 IrInst::Call(callee, count) => {
                     let start = depth.checked_sub(*count)
                         .ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
-                    for (arg, reg) in (start..depth).zip(0..8) {
-                        self.load_stack(arg, &format!("%xmm{reg}"));
+                    let float_regs = ["%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"];
+                    let int_regs = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9", "%r10", "%r11"];
+                    let arg_kinds = &entry_states[ip].as_ref().unwrap()[start..depth];
+                    let mut float_index = 0usize;
+                    let mut int_index = 0usize;
+                    for (offset, kind) in arg_kinds.iter().copied().enumerate() {
+                        let arg = start + offset;
+                        match kind {
+                            Kind::Number | Kind::Boolean => {
+                                self.load_stack(arg, float_regs[float_index]);
+                                float_index += 1;
+                            }
+                            Kind::Text | Kind::Function => {
+                                self.text.push_str(&format!(
+                                    "    movq {}(%rbp), {}\n",
+                                    stack_offset(arg),
+                                    int_regs[int_index]
+                                ));
+                                int_index += 1;
+                            }
+                            Kind::Unknown => {
+                                return Err(format!("Nano native: chamada '{callee}' contém um argumento de tipo desconhecido"));
+                            }
+                        }
                     }
                     self.text.push_str(&format!("    call nano_fn_{}\n", sanitize(callee)));
                     match function_returns.get(callee).copied().unwrap_or(Kind::Number) {
@@ -453,15 +582,20 @@ fn analyze_stack(
     name: &str,
     locals: &HashMap<String, usize>,
     params: &[String],
+    param_kinds: &[Kind],
     function_returns: &HashMap<String, Kind>,
-) -> Result<(Vec<Option<Vec<Kind>>>, usize, HashMap<String, Kind>, Option<Kind>), String> {
+) -> Result<(Vec<Option<Vec<Kind>>>, usize, HashMap<String, Kind>, Option<Kind>, Vec<(String, Vec<Kind>)>), String> {
     use std::collections::VecDeque;
 
     let mut states: Vec<Option<Vec<Kind>>> = vec![None; code.len()];
     let mut local_kinds = HashMap::<String, Kind>::new();
-    for param in params {
-        local_kinds.insert(param.clone(), Kind::Number);
+    if param_kinds.len() != params.len() {
+        return Err(format!("Nano native: assinatura inconsistente de '{name}'"));
     }
+    for (param, kind) in params.iter().zip(param_kinds.iter().copied()) {
+        local_kinds.insert(param.clone(), kind);
+    }
+    let mut calls = Vec::<(String, Vec<Kind>)>::new();
     let mut work = VecDeque::new();
     if !code.is_empty() {
         states[0] = Some(Vec::new());
@@ -579,13 +713,14 @@ fn analyze_stack(
                 if *count > 8 {
                     return Err(format!("Nano native: chamada '{callee}' tem mais de 8 argumentos"));
                 }
+                let start = next.len().checked_sub(*count)
+                    .ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
+                let arg_kinds = next[start..].to_vec();
                 for _ in 0..*count {
-                    let value = next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
-                    if !matches!(value, Kind::Number | Kind::Boolean) {
-                        return Err(format!("Nano native: chamada '{callee}' exige argumentos escalares"));
-                    }
+                    next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
                 }
-                next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
+                calls.push((callee.clone(), arg_kinds));
+                next.push(function_returns.get(callee).copied().unwrap_or(Kind::Unknown));
             }
             IrInst::CallValue(count) => {
                 if *count > 8 {
@@ -618,17 +753,20 @@ fn analyze_stack(
             IrInst::Jump(_) => {}
             IrInst::Return => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function) {
+                if !matches!(value, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function) {
                     return Err(format!("Nano native: retorno de '{name}' tem um tipo que o backend não suporta"));
                 }
-                match return_kind {
-                    None => return_kind = Some(value),
-                    Some(previous) if previous == value => {}
-                    Some(previous) => {
-                        return Err(format!(
-                            "Nano native: função '{name}' retorna tipos diferentes: {:?} e {:?}",
-                            previous, value
-                        ));
+                if value != Kind::Unknown {
+                    match return_kind {
+                        None => return_kind = Some(value),
+                        Some(Kind::Unknown) => return_kind = Some(value),
+                        Some(previous) if previous == value => {}
+                        Some(previous) => {
+                            return Err(format!(
+                                "Nano native: função '{name}' retorna tipos diferentes: {:?} e {:?}",
+                                previous, value
+                            ));
+                        }
                     }
                 }
             }
@@ -681,7 +819,16 @@ fn analyze_stack(
         }
     }
 
-    Ok((states, max_stack, local_kinds, return_kind))
+    Ok((states, max_stack, local_kinds, return_kind, calls))
+}
+
+fn merge_kind(previous: Kind, next: Kind) -> Result<Kind, ()> {
+    match (previous, next) {
+        (Kind::Unknown, kind) => Ok(kind),
+        (kind, Kind::Unknown) => Ok(kind),
+        (a, b) if a == b => Ok(a),
+        _ => Err(()),
+    }
 }
 
 fn sanitize(name: &str) -> String {
