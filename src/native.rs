@@ -167,7 +167,7 @@ impl NativeModule {
         let (entry_states, max_stack, _local_kinds, _return_kind, _calls) =
             analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
 
-        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16 + 8;
+        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
             "\n    .text\n    .globl {symbol}\n{symbol}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq "
         ));
