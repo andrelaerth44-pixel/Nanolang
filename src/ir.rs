@@ -523,13 +523,13 @@ impl IrRuntime {
             _ => return Err("Nano: adam() requer taxa Number".into()),
         };
 
-        let (id, shape, len) = {
+        let (id, len) = {
             let p = param.borrow();
             let g = grad.borrow();
             if p.shape != g.shape {
                 return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
             }
-            (p.id, p.shape.clone(), p.data.len())
+            (p.id, p.data.len())
         };
 
         let state = self.adam.entry(id).or_insert_with(|| AdamState {
@@ -548,17 +548,19 @@ impl IrRuntime {
         let beta2 = 0.999_f32;
         let eps = 1e-8_f32;
 
-        let mut p = param.borrow_mut();
-        let g = grad.borrow();
-        for i in 0..p.data.len() {
-            state.m[i] = beta1 * state.m[i] + (1.0 - beta1) * g.data[i];
-            state.v[i] = beta2 * state.v[i] + (1.0 - beta2) * g.data[i] * g.data[i];
-            let m_hat = state.m[i] / (1.0 - beta1.powf(t));
-            let v_hat = state.v[i] / (1.0 - beta2.powf(t));
-            p.data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
+        {
+            let mut p = param.borrow_mut();
+            let g = grad.borrow();
+            for i in 0..p.data.len() {
+                state.m[i] = beta1 * state.m[i] + (1.0 - beta1) * g.data[i];
+                state.v[i] = beta2 * state.v[i] + (1.0 - beta2) * g.data[i] * g.data[i];
+                let m_hat = state.m[i] / (1.0 - beta1.powf(t));
+                let v_hat = state.v[i] / (1.0 - beta2.powf(t));
+                p.data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
+            }
         }
 
-        Ok(Value::Tensor(param))
+        Ok(Value::Tensor(std::rc::Rc::clone(&param)))
     }
 
     fn binary_value(&mut self, a: Value, op: Op, b: Value) -> Result<Value, String> {
