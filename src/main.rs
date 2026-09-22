@@ -749,6 +749,16 @@ impl Semantic {
                     }
                     return Ok(Type::Tensor);
                 }
+                if name == "adam" {
+                    if args.len() != 3 { return Err("Nano: adam() recebe parâmetro, gradiente e taxa".into()); }
+                    let param = self.expr_type(&args[0])?;
+                    let grad = self.expr_type(&args[1])?;
+                    let rate = self.expr_type(&args[2])?;
+                    if (param != Type::Tensor && param != Type::Any) || (grad != Type::Tensor && grad != Type::Any) || (rate != Type::Number && rate != Type::Any) {
+                        return Err("Nano: adam() requer Tensor, Tensor, Number".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
                 if name == "step" {
                     if args.len() != 3 { return Err("Nano: step() recebe parâmetro, gradiente e taxa".into()); }
                     let param = self.expr_type(&args[0])?;
