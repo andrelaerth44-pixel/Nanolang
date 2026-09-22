@@ -880,10 +880,18 @@ fn cmp(a: Value, b: Value, f: fn(f64,f64)->bool) -> Result<Value,String> {
     }
 }
 
-fn parse_cli(args: &[String]) -> Result<(String, Option<backend::BackendKind>), String> {
-    if args.get(1).map(String::as_str) != Some("run") {
-        return Err("uso: nano run [--backend cpu|gpu] [arquivo.nano]".into());
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliCommand {
+    Run,
+    Check,
+}
+
+fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::BackendKind>), String> {
+    let command = match args.get(1).map(String::as_str) {
+        Some("run") => CliCommand::Run,
+        Some("check") => CliCommand::Check,
+        _ => return Err("uso: nano run|check [--backend cpu|gpu] [arquivo.nano]".into()),
+    };
 
     let mut path = None;
     let mut selected_backend = None;
@@ -917,15 +925,15 @@ fn parse_cli(args: &[String]) -> Result<(String, Option<backend::BackendKind>), 
         index += 1;
     }
 
-    Ok((path.unwrap_or_else(|| "main.nano".into()), selected_backend))
+    Ok((command, path.unwrap_or_else(|| "main.nano".into()), selected_backend))
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let (path, cli_backend) = match parse_cli(&args) {
+    let (command, path, cli_backend) = match parse_cli(&args) {
         Ok(value) => value,
         Err(e) => {
-            eprintln!("Nano 0.7 — {e}");
+            eprintln!("Nano 0.8 — {e}");
             process::exit(2);
         }
     };
@@ -960,6 +968,10 @@ fn main() {
     let mut optimizer = ir::Optimizer::new();
     let ir_program = optimizer.optimize_program(ir_program);
 
+    if command == CliCommand::Check {
+        return;
+    }
+
     let backend_kind = match cli_backend {
         Some(kind) => kind,
         None => match env::var("NANO_BACKEND") {
@@ -985,5 +997,40 @@ fn main() {
     if let Err(e) = runtime.run(&ir_program) {
         eprintln!("{e}");
         process::exit(1);
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_defaults_to_run_and_main() {
+        let args = vec!["nano".into(), "run".into()];
+        let (command, path, backend) = parse_cli(&args).unwrap();
+        assert_eq!(command, CliCommand::Run);
+        assert_eq!(path, "main.nano");
+        assert_eq!(backend, None);
+    }
+
+    #[test]
+    fn cli_supports_check_and_backend() {
+        let args = vec![
+            "nano".into(),
+            "check".into(),
+            "--backend=cpu".into(),
+            "examples/tensor.nano".into(),
+        ];
+        let (command, path, backend) = parse_cli(&args).unwrap();
+        assert_eq!(command, CliCommand::Check);
+        assert_eq!(path, "examples/tensor.nano");
+        assert_eq!(backend, Some(backend::BackendKind::Cpu));
+    }
+
+    #[test]
+    fn cli_rejects_unknown_options() {
+        let args = vec!["nano".into(), "run".into(), "--wat".into()];
+        assert!(parse_cli(&args).is_err());
     }
 }

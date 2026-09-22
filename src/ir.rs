@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::fs;
 
 use super::{backend, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
@@ -267,7 +268,9 @@ pub(crate) struct IrRuntime {
     functions: HashMap<String, IrFunction>,
     adam: HashMap<u64, AdamState>,
     backend: Box<dyn TensorBackend>,
-}
+    loaded_modules: HashSet<PathBuf>,
+    module_stack: Vec<PathBuf>,
+
 
 impl IrRuntime {
     pub(crate) fn new() -> Self {
@@ -282,6 +285,8 @@ impl IrRuntime {
             functions: HashMap::new(),
             adam: HashMap::new(),
             backend,
+            loaded_modules: HashSet::new(),
+            module_stack: Vec::new(),
         })
     }
 
@@ -558,6 +563,9 @@ impl IrRuntime {
             if p.shape != g.shape {
                 return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
             }
+            if p.device != g.device {
+                return Err("Nano: parâmetro e gradiente precisam estar no mesmo dispositivo".into());
+            }
             (p.id, p.data.len())
         };
 
@@ -614,20 +622,57 @@ impl IrRuntime {
     }
 
     fn load_module(&mut self, path: &str) -> Result<(), String> {
-        let source = fs::read_to_string(path)
-            .map_err(|e| format!("Nano: não foi possível carregar módulo '{path}': {e}"))?;
-        let tokens = Lexer::new(&source).lex()?;
-        let program = Parser::new(tokens).program()?;
+        let requested = Path::new(path);
+        let resolved = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else if let Some(parent) = self.module_stack.last() {
+            parent.parent().unwrap_or_else(|| Path::new(".")).join(requested)
+        } else {
+            requested.to_path_buf()
+        };
 
-        let mut semantic = Semantic::new();
-        semantic.check(&program)?;
+        let canonical = fs::canonicalize(&resolved)
+            .map_err(|e| format!("Nano: não foi possível localizar módulo '{path}': {e}"))?;
 
-        let mut compiler = Compiler::new();
-        let module = compiler.compile(&program)?;
-        self.functions.extend(module.functions);
+        if self.loaded_modules.contains(&canonical) {
+            return Ok(());
+        }
 
-        let _ = self.execute_code(&module.code)?;
-        Ok(())
+        if let Some(start) = self.module_stack.iter().position(|item| item == &canonical) {
+            let mut chain = self.module_stack[start..]
+                .iter()
+                .map(|item| item.display().to_string())
+                .collect::<Vec<_>>();
+            chain.push(canonical.display().to_string());
+            return Err(format!("Nano: ciclo de módulos detectado: {}", chain.join(" -> ")));
+        }
+
+        self.module_stack.push(canonical.clone());
+
+        let result = (|| {
+            let source = fs::read_to_string(&canonical)
+                .map_err(|e| format!("Nano: não foi possível carregar módulo '{}': {e}", canonical.display()))?;
+            let tokens = Lexer::new(&source).lex()?;
+            let program = Parser::new(tokens).program()?;
+
+            let mut semantic = Semantic::new();
+            semantic.check(&program)?;
+
+            let mut compiler = Compiler::new();
+            let module = compiler.compile(&program)?;
+            self.functions.extend(module.functions);
+
+            let _ = self.execute_code(&module.code)?;
+            Ok(())
+        })();
+
+        self.module_stack.pop();
+
+        if result.is_ok() {
+            self.loaded_modules.insert(canonical);
+        }
+
+        result
     }
 }
 
@@ -670,9 +715,18 @@ fn index_value(target: Value, index: Value) -> Result<Value, String> {
             values.get(n as usize).cloned()
                 .ok_or_else(|| "Nano: índice fora do limite".into())
         }
+        (Value::Tensor(tensor), Value::Number(n)) => {
+            if n < 0.0 || n.fract() != 0.0 {
+                return Err("Nano: índice de Tensor deve ser um número inteiro".into());
+            }
+            let tensor = tensor.borrow();
+            tensor.data.get(n as usize)
+                .map(|value| Value::Number(*value as f64))
+                .ok_or_else(|| "Nano: índice de Tensor fora do limite".into())
+        }
         (Value::Object(values), Value::Text(key)) => values.get(&key).cloned()
             .ok_or_else(|| format!("Nano: chave '{key}' não existe")),
-        _ => Err("Nano: indexação requer lista[número] ou objeto[texto]".into()),
+        _ => Err("Nano: indexação requer lista[número], Tensor[número] ou objeto[texto]".into()),
     }
 }
 
@@ -875,6 +929,9 @@ fn step_value(parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value
     if p.shape != g.shape {
         return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
     }
+    if p.device != g.device {
+        return Err("Nano: parâmetro e gradiente precisam estar no mesmo dispositivo".into());
+    }
     for (value, delta) in p.data.iter_mut().zip(&g.data) {
         *value -= lr * delta;
     }
@@ -985,5 +1042,24 @@ fn backward(
             backward(&right, rg, grads)?;
             Ok(())
         }
+    }
+}
+
+
+#[cfg(test)]
+mod ir_tests {
+    use super::*;
+
+    #[test]
+    fn tensor_index_reads_flattened_storage() {
+        let tensor = super::Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], false).unwrap();
+        let value = super::index_value(super::Value::Tensor(tensor), super::Value::Number(2.0)).unwrap();
+        assert_eq!(value, super::Value::Number(3.0));
+    }
+
+    #[test]
+    fn runtime_starts_on_cpu() {
+        let runtime = super::IrRuntime::new();
+        assert_eq!(runtime.backend.kind(), super::backend::BackendKind::Cpu);
     }
 }

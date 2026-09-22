@@ -75,16 +75,19 @@ Ou, dentro de um projeto:
 nano run
 ```
 
-A direção da CLI também inclui:
+A CLI bootstrap agora inclui:
 
 ```bash
-nano build
-nano build --native
+nano run
+nano check examples/tensor.nano
+nano run --backend cpu examples/tensor.nano
 ```
+
+A seleção de `gpu` já existe na CLI, mas o backend GPU real ainda não está implementado.
 
 Quando `run` for executado dentro de um projeto sem arquivo explícito, a convenção será procurar automaticamente por `main.nano`.
 
-## Nano 0.7
+## Nano 0.8
 
 O núcleo atual contém:
 
@@ -173,7 +176,7 @@ Fazer com que uma pessoa aprenda Nano rapidamente e ainda consiga construir apli
 
 ## Nano IR
 
-A primeira implementação de IR está em `src/ir.rs`.
+A primeira implementação de IR está em `src/ir.rs`. O runtime também protege carregamento repetido de módulos e detecta ciclos de `use`.
 
 O fluxo agora é:
 
