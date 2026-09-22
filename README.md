@@ -2,54 +2,104 @@
 
 Nano é uma linguagem de programação independente, nativa e simples de aprender.
 
-A extensão oficial dos programas é .nano.
+A extensão oficial dos programas é `.nano`.
 
 ## Filosofia
 
-Pouco código. Poucos conceitos. Enorme capacidade.
+**Pouco código. Poucos conceitos. Enorme capacidade.**
 
 Nano não é uma linguagem ponte para Python, Kotlin, Java, JavaScript ou outra linguagem.
 
-Arquitetura pretendida:
+A arquitetura pretendida é:
 
-.nano -> Nano Frontend -> Nano IR -> Nano Runtime / Native Backends
+`.nano -> Nano Frontend -> Nano IR -> Nano Runtime -> Native CPU/GPU/NPU`
 
-A versão 0.1 usa um runtime próprio para executar a linguagem diretamente. A evolução prevista é adicionar geração de código nativo para CPU e, depois, GPU/NPU.
+## main.nano
 
-## Primeiro programa
+O arquivo principal de um projeto Nano é simplesmente:
 
-app MainActivity {
-    print "Olá, mundo!"
-}
+```
+main.nano
+```
 
-Salve como MainActivity.nano.
+Ele **não é um menu** e não é uma cópia de `MainActivity`. É o ponto de entrada do programa.
+
+Um projeto pode ter:
+
+```
+MeuProjeto/
+├── main.nano
+├── ui.nano
+├── data.nano
+└── model.nano
+```
+
+O programa começa em `main.nano`. Outros arquivos existem para organizar sistemas maiores.
+
+Primeiro programa:
+
+```nano
+print "Olá, mundo!"
+```
+
+Salve como `main.nano`.
 
 ## CLI
 
-cargo run -- run examples/MainActivity.nano
+Bootstrap atual:
 
-Na evolução do projeto:
+```bash
+cargo run -- run examples/main.nano
+```
 
-nano run MainActivity.nano
-nano build MainActivity.nano
-nano build MainActivity.nano --native
+Direção da CLI:
+
+```bash
+nano run
+nano build
+nano build --native
+```
+
+Quando `run` for executado dentro de um projeto, a convenção será procurar automaticamente por `main.nano`.
 
 ## Nano 0.1
 
 O núcleo inicial contém:
 
-- valores numéricos, texto e booleanos;
+- números, texto e booleanos;
 - variáveis;
 - expressões;
-- print;
-- if / else;
+- `print`;
+- `if` / `else`;
 - blocos;
-- funções simples;
-- arquivos .nano;
+- funções;
+- arquivos `.nano`;
 - runtime próprio.
 
-Depois entram dados, aplicações, paralelismo, IA, compressão e backends nativos.
+Depois entram módulos, coleções, eventos, aplicações, dados, paralelismo, IA, compressão e backends nativos.
+
+## Self-host
+
+O objetivo de longo prazo é o **self-host**.
+
+A evolução planejada é:
+
+```
+Stage 0
+Nano compiler inicial escrito em Rust
+        ↓
+Stage 1
+Nano compiler escrito em Nano
+        ↓
+Stage 2
+Nano compila o próprio Nano compiler
+        ↓
+Stage 3
+Nano torna-se a principal linguagem de implementação de sua própria ferramentachain
+```
+
+O compilador inicial em Rust é apenas o bootstrap. Ele não define a linguagem como uma linguagem dependente de Rust.
 
 ## Objetivo
 
-Fazer com que uma pessoa consiga aprender Nano rapidamente e ainda assim construir aplicações grandes, sistemas, jogos, ferramentas de dados e IA usando a mesma linguagem.
+Fazer com que uma pessoa aprenda Nano rapidamente e ainda consiga construir aplicações grandes, sistemas, jogos, ferramentas de dados e IA usando a mesma linguagem.
