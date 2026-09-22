@@ -15,7 +15,8 @@ use half::{bf16, f16};
 enum Token {
     Ident(String), Number(f64), Text(String),
     True, False, Use, Function, Print, If, Else, Return, While, For, In,
-    Plus, Minus, Star, Slash, Equal, EqualEqual, BangEqual,
+    Plus, Minus, Star, Slash, Percent, Equal, EqualEqual, BangEqual,
+    And, Or, Bang,
     Greater, GreaterEqual, Less, LessEqual,
     LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Comma, Colon, Dot, Eof,
 }
@@ -43,6 +44,17 @@ impl Lexer {
                 '-' => { self.advance(); out.push(Token::Minus); }
                 '*' => { self.advance(); out.push(Token::Star); }
                 '/' => { self.advance(); out.push(Token::Slash); }
+                '%' => { self.advance(); out.push(Token::Percent); }
+                '&' => {
+                    self.advance();
+                    if self.peek() == Some('&') { self.advance(); out.push(Token::And); }
+                    else { return Err("Nano: '&' isolado não é válido".into()); }
+                }
+                '|' => {
+                    self.advance();
+                    if self.peek() == Some('|') { self.advance(); out.push(Token::Or); }
+                    else { return Err("Nano: '|' isolado não é válido".into()); }
+                }
                 '(' => { self.advance(); out.push(Token::LeftParen); }
                 ')' => { self.advance(); out.push(Token::RightParen); }
                 '{' => { self.advance(); out.push(Token::LeftBrace); }
@@ -60,7 +72,7 @@ impl Lexer {
                 '!' => {
                     self.advance();
                     if self.peek() == Some('=') { self.advance(); out.push(Token::BangEqual); }
-                    else { return Err("Nano: '!' isolado não é válido na v0.1".into()); }
+                    else { out.push(Token::Bang); }
                 }
                 '>' => {
                     self.advance();
@@ -373,12 +385,15 @@ impl Type {
 #[derive(Debug, Clone)]
 enum Expr {
     Value(Value), Var(String), List(Vec<Expr>), Object(Vec<(String, Expr)>),
-    Binary(Box<Expr>, Op, Box<Expr>), Call(String, Vec<Expr>),
+    Binary(Box<Expr>, Op, Box<Expr>), Unary(UnaryOp, Box<Expr>), Call(String, Vec<Expr>),
     Index(Box<Expr>, Box<Expr>), Field(Box<Expr>, String),
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Op { Add, Sub, Mul, Div, Eq, Ne, Gt, Ge, Lt, Le }
+enum UnaryOp { Neg, Not }
+
+#[derive(Debug, Clone, Copy)]
+enum Op { Add, Sub, Mul, Div, Mod, Eq, Ne, Gt, Ge, Lt, Le, And, Or }
 
 #[derive(Debug, Clone)]
 enum Stmt {
@@ -497,7 +512,26 @@ impl Parser {
         self.expect(Token::RightBrace)?;
         Ok(out)
     }
-    fn expression(&mut self) -> Result<Expr, String> { self.equality() }
+    fn expression(&mut self) -> Result<Expr, String> { self.logical_or() }
+
+    fn logical_or(&mut self) -> Result<Expr, String> {
+        let mut left = self.logical_and()?;
+        while matches!(self.peek(), Token::Or) {
+            self.advance();
+            left = Expr::Binary(Box::new(left), Op::Or, Box::new(self.logical_and()?));
+        }
+        Ok(left)
+    }
+
+    fn logical_and(&mut self) -> Result<Expr, String> {
+        let mut left = self.equality()?;
+        while matches!(self.peek(), Token::And) {
+            self.advance();
+            left = Expr::Binary(Box::new(left), Op::And, Box::new(self.equality()?));
+        }
+        Ok(left)
+    }
+
     fn equality(&mut self) -> Result<Expr, String> {
         let mut left = self.compare()?;
         loop {
@@ -531,14 +565,34 @@ impl Parser {
         Ok(left)
     }
     fn factor(&mut self) -> Result<Expr, String> {
-        let mut left = self.primary()?;
+        let mut left = self.unary()?;
         loop {
-            let op = match self.peek() { Token::Star => Op::Mul, Token::Slash => Op::Div, _ => break };
+            let op = match self.peek() {
+                Token::Star => Op::Mul,
+                Token::Slash => Op::Div,
+                Token::Percent => Op::Mod,
+                _ => break,
+            };
             self.advance();
-            left = Expr::Binary(Box::new(left), op, Box::new(self.primary()?));
+            left = Expr::Binary(Box::new(left), op, Box::new(self.unary()?));
         }
         Ok(left)
     }
+
+    fn unary(&mut self) -> Result<Expr, String> {
+        match self.peek() {
+            Token::Minus => {
+                self.advance();
+                Ok(Expr::Unary(UnaryOp::Neg, Box::new(self.unary()?)))
+            }
+            Token::Bang => {
+                self.advance();
+                Ok(Expr::Unary(UnaryOp::Not, Box::new(self.unary()?)))
+            }
+            _ => self.primary(),
+        }
+    }
+
     fn primary(&mut self) -> Result<Expr, String> {
         let mut expr = match self.advance() {
             Token::Number(v) => Expr::Value(Value::Number(v)),
