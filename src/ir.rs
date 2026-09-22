@@ -311,15 +311,23 @@ impl Compiler {
                 code.push(IrInst::Store(name.clone()));
             }
             Stmt::AssignIndex(target, index, value) => {
+                let Expr::Var(name) = target else {
+                    return Err("Nano: atribuição por índice exige uma variável de lista/objeto como alvo".into());
+                };
                 self.compile_expr(target, code)?;
                 self.compile_expr(index, code)?;
                 self.compile_expr(value, code)?;
                 code.push(IrInst::SetIndex);
+                code.push(IrInst::Store(name.clone()));
             }
             Stmt::AssignField(target, name, value) => {
+                let Expr::Var(base) = target else {
+                    return Err("Nano: atribuição por campo exige uma variável Object como alvo".into());
+                };
                 self.compile_expr(target, code)?;
                 self.compile_expr(value, code)?;
                 code.push(IrInst::SetField(name.clone()));
+                code.push(IrInst::Store(base.clone()));
             }
             Stmt::Print(expr) => {
                 self.compile_expr(expr, code)?;
@@ -630,6 +638,37 @@ impl IrRuntime {
                     let index = stack.pop().ok_or_else(|| "Nano IR: stack vazia no índice".to_string())?;
                     let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no alvo".to_string())?;
                     stack.push(self.index_value(target, index)?);
+                }
+                IrInst::SetIndex => {
+                    let value = stack.pop().ok_or_else(|| "Nano IR: stack vazia no valor de atribuição".to_string())?;
+                    let index = stack.pop().ok_or_else(|| "Nano IR: stack vazia no índice de atribuição".to_string())?;
+                    let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no alvo de atribuição".to_string())?;
+                    let updated = match (target, index) {
+                        (Value::List(mut values), Value::Number(n)) if n >= 0.0 && n.fract() == 0.0 => {
+                            let index = n as usize;
+                            if index >= values.len() {
+                                return Err("Nano: índice de atribuição fora do limite".into());
+                            }
+                            values[index] = value;
+                            Value::List(values)
+                        }
+                        (Value::Object(mut values), Value::Text(key)) => {
+                            values.insert(key, value);
+                            Value::Object(values)
+                        }
+                        _ => return Err("Nano: atribuição por índice requer List[número] ou Object[texto]".into()),
+                    };
+                    stack.push(updated);
+                }
+                IrInst::SetField(name) => {
+                    let value = stack.pop().ok_or_else(|| "Nano IR: stack vazia no valor de campo".to_string())?;
+                    let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no alvo de campo".to_string())?;
+                    let mut values = match target {
+                        Value::Object(values) => values,
+                        _ => return Err("Nano: atribuição por campo requer Object".into()),
+                    };
+                    values.insert(name.clone(), value);
+                    stack.push(Value::Object(values));
                 }
                 IrInst::Field(name) => {
                     let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no campo".to_string())?;
