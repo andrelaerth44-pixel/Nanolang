@@ -165,9 +165,9 @@ impl NativeModule {
             max_stack = max_stack.max(stack.len());
         }
 
-        // SysV x86-64: após push %rbp, %rsp fica alinhado em 16; antes de call,
-        // o ABI exige %rsp = 8 mod 16. O frame precisa, portanto, ter tamanho 8 mod 16.
-        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16 + 8;
+        // SysV x86-64: após push %rbp, %rsp fica 0 mod 16.
+        // O ponto imediatamente antes de cada call deve permanecer 0 mod 16.
+        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
             "\n    .text\n    .globl {symbol}\n{symbol}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq "
         ));
