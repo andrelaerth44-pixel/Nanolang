@@ -1,3 +1,5 @@
+use "lexer.nano"
+
 # Nano self-hosted parser v0.2
 # Consome os tokens de selfhost/lexer.nano e produz uma AST em Objects/Lists.
 
