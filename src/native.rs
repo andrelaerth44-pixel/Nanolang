@@ -174,6 +174,7 @@ impl NativeModule {
         let locals = initial_locals(params, code)?;
         let (entry_states, max_stack, local_kinds, _return_kind, _calls) =
             analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
+        let declared_return = function_returns.get(name).copied().unwrap_or(Kind::Number);
 
         let temp_slots = 8usize;
         let frame = (((4096 + locals.len().max(1) * 8 + (max_stack + temp_slots) * 8) + 15) / 16) * 16;
@@ -663,12 +664,19 @@ impl NativeModule {
                     let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
-                    match kind {
-                        Kind::Function | Kind::Text | Kind::Null | Kind::Any => self.text.push_str(&format!(
+                    if declared_return == Kind::Any && kind != Kind::Any {
+                        self.box_value(slot, kind)?;
+                        self.text.push_str("    movq %rax, %r12\n");
+                    }
+                    match (declared_return, kind) {
+                        (Kind::Any, _) => self.text.push_str(&format!(
+                            "    movq %rax, %rax\n"
+                        )),
+                        (_, Kind::Function | Kind::Text | Kind::Null | Kind::Any) => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n",
                             stack_offset(slot)
                         )),
-                        Kind::Unknown => {
+                        (_, Kind::Unknown) => {
                             return Err(format!("Nano native: retorno de tipo desconhecido em '{name}'"));
                         }
                         _ => self.load_stack(slot, "%xmm0"),
@@ -1075,6 +1083,27 @@ fn analyze_stack(
                 next.push(Kind::Number);
             }
             IrInst::Call(callee, count) => {
+                if scalar_math_symbol(callee).is_some() {
+                    let required = match callee.as_str() {
+                        "pow" | "std.math.pow" | "min" | "std.math.min" | "max" | "std.math.max" => 2,
+                        _ => 1,
+                    };
+                    if *count != required {
+                        return Err(format!("Nano native: '{callee}' recebe {required} argumentos"));
+                    }
+                    let start = next.len().checked_sub(*count)
+                        .ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
+                    for index in start..next.len() {
+                        if next[index] != Kind::Number && next[index] != Kind::Unknown {
+                            return Err(format!("Nano native: '{callee}' exige argumentos Number"));
+                        }
+                    }
+                    for _ in 0..*count {
+                        next.pop();
+                    }
+                    next.push(Kind::Number);
+                    continue;
+                }
                 if callee == "len" || callee == "std.collections.len" {
                     if *count != 1 {
                         return Err("Nano native: len() recebe exatamente 1 argumento".into());
