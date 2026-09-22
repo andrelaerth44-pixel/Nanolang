@@ -82,6 +82,9 @@ impl NativeModule {
             match inst {
                 IrInst::Const(Value::Number(_)) => stack.push(Kind::Number),
                 IrInst::Const(Value::Text(_)) => stack.push(Kind::Text),
+                IrInst::Const(_) => {
+                    return Err(format!("Nano native: constante não suportada em '{name}'"));
+                },
                 IrInst::Load(var) => {
                     let _ = locals.get(var)
                         .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
