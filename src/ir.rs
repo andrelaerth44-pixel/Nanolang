@@ -3062,6 +3062,24 @@ mod ir_tests {
         assert_eq!(runtime.backend.kind(), BackendKind::Cpu);
     }
 
+    #[test]
+    fn transposed_matmul_cpu_backward_maps_gradients_to_raw_shapes() {
+        let left = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], true).unwrap();
+        let right = Tensor::new(vec![5.0, 6.0, 7.0, 8.0], vec![2, 2], true).unwrap();
+        let output = Tensor::derived_on(
+            vec![26.0, 30.0, 38.0, 44.0],
+            vec![2, 2],
+            true,
+            BackendKind::Cpu,
+            TensorOp::MatmulTransposed(left.clone(), right.clone(), true, false),
+        ).unwrap();
+        let mut grads = HashMap::new();
+        backward(&output, vec![1.0; 4], &mut grads).unwrap();
+
+        assert_eq!(grads.get(&left.borrow().id).unwrap(), &vec![11.0, 11.0, 15.0, 15.0]);
+        assert_eq!(grads.get(&right.borrow().id).unwrap(), &vec![3.0, 3.0, 7.0, 7.0]);
+    }
+
 
     #[test]
     fn standard_library_strings_and_math_work() {
