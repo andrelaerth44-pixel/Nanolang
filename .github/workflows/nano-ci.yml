@@ -65,9 +65,10 @@ jobs:
 
       - name: Self-host source checks
         run: |
-          cargo run --quiet --bin nano -- check selfhost/lexer.nano
-          cargo run --quiet --bin nano -- check selfhost/parser.nano
-          cargo run --quiet --bin nano -- check selfhost/compiler.nano
+          for f in selfhost/lexer.nano selfhost/parser.nano selfhost/compiler.nano; do
+            echo "=== Nano check: $f ==="
+            cargo run --quiet --bin nano -- check "$f"
+          done
 
       - name: Self-host bootstrap
         run: |
