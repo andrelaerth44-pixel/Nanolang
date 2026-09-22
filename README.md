@@ -62,7 +62,7 @@ nano build --native
 
 Quando `run` for executado dentro de um projeto, a convenção será procurar automaticamente por `main.nano`.
 
-## Nano 0.2
+## Nano 0.3
 
 O núcleo inicial contém:
 
@@ -78,6 +78,7 @@ O núcleo inicial contém:
 - objetos/mapas;
 - indexação;
 - `len()`;
+- módulos com `use`;
 - runtime próprio.
 
 Depois entram módulos, coleções, eventos, aplicações, dados, paralelismo, IA, compressão e backends nativos.
