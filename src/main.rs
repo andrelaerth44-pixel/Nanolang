@@ -12,6 +12,7 @@ mod sync_runtime;
 mod crypto;
 mod http;
 mod selfhost_native;
+mod dap;
 
 use std::{cell::RefCell, env, fs, io::{self, BufRead, Write}, path::{Path, PathBuf}, process::{self, Stdio}, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
@@ -2043,6 +2044,13 @@ fn run_selfhost_native(source_path: &str, output_path: &str) -> Result<(), Strin
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).map(String::as_str) == Some("debug") && args.iter().any(|arg| arg == "--dap") {
+        if let Err(e) = dap::serve() {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("build") && args.iter().any(|arg| arg == "--selfhost") {
         let source = args.iter().skip(2).find(|arg| !arg.starts_with('-') && *arg != "--selfhost").cloned().unwrap_or_else(|| "examples/main.nano".into());
         let mut output = None;
