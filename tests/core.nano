@@ -1,18 +1,18 @@
 use "std.fs"
 
-assert(2 + 3 == 5)
-assert(upper("nano") == "NANO")
-assert(pow(2, 8) == 256)
+assert(2 + 3 == 5, "arithmetic")
+assert(upper("nano") == "NANO", "upper")
+assert(pow(2, 8) == 256, "pow")
 
 channel_id = std.async.channel()
 std.async.send(channel_id, "ok")
 message = std.async.recv(channel_id)
-assert(message == "ok")
+assert(message == "ok", "channel-send")
 std.async.close_channel(channel_id)
 
 path = "tests/.nano-test.tmp"
 std.fs.write_text(path, "nano")
-assert(std.fs.exists(path))
-assert(std.fs.read_text(path) == "nano")
+assert(std.fs.exists(path), "channel-recv")
+assert(std.fs.read_text(path) == "nano", "fs-exists")
 std.fs.remove(path)
-assert(!std.fs.exists(path))
+assert(!std.fs.exists(path), "fs-read")
