@@ -67,7 +67,7 @@ nano build --native
 
 Quando `run` for executado dentro de um projeto sem arquivo explícito, a convenção será procurar automaticamente por `main.nano`.
 
-## Nano 0.6
+## Nano 0.7
 
 O núcleo atual contém:
 
@@ -78,6 +78,9 @@ O núcleo atual contém:
 - expressões;
 - `print`;
 - `if` / `else`;
+- `while`;
+- `for ... in ...`;
+- `range()`;
 - blocos;
 - funções;
 - arquivos `.nano`;
@@ -90,12 +93,15 @@ O núcleo atual contém:
 - `tensor()`, `parameter()`, `zeros()`, `shape()`, `matmul()`, `sum()` e `mean()`;
 - autograd com `grad()`;
 - atualização de parâmetros com `step()`;
+- otimizador Adam com `adam()`;
+- módulos de modelo usando `use`;
+- atualizações de parâmetros in-place;
 - IR otimizado com constant folding;
 - runtime próprio.
 
 A regra é: capacidades novas não devem transformar Nano numa linguagem cheia de declarações obrigatórias.
 
-O próximo foco é transformar o Tensor em uma infraestrutura de computação real: memória contígua, operações vetorizadas, tipos de precisão, otimização do grafo, autograd mais completo e backends GPU.
+O próximo foco é transformar o Tensor em uma infraestrutura de computação real: operações vetorizadas, tipos de precisão, otimização do grafo, data loading, memória planejada e backends GPU.
 
 A meta de engenharia é permitir código Nano muito curto para dados e IA. Suporte a treinamento de modelos muito grandes, incluindo uma classe de 5 bilhões de parâmetros, será tratado como uma meta de backend e memória — não como uma promessa de que a VM atual já consegue fazer isso em qualquer GPU.
 
