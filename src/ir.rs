@@ -492,7 +492,10 @@ impl IrRuntime {
             let device = source.device;
             let op = source.op.clone();
             drop(source);
-            return Ok(Value::Tensor(super::Tensor::derived_dtype_on(data, shape, requires_grad, device, dtype, op)?));
+            let output=super::Tensor::derived_dtype_on(data.clone(),shape,requires_grad,device,dtype,op)?;
+            let id=output.borrow().id;
+            self.backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+            return Ok(Value::Tensor(output));
         }
 
         if name == "backend" {
@@ -518,7 +521,10 @@ impl IrRuntime {
             }
             let data = list_numbers(&args[0], "dados")?;
             let shape = list_shape(&args[1])?;
-            return Ok(Value::Tensor(super::Tensor::new_with_dtype_on(data, shape, false, self.backend.kind(), self.dtype)?));
+            let tensor=super::Tensor::new_with_dtype_on(data.clone(),shape,false,self.backend.kind(),self.dtype)?;
+            let id=tensor.borrow().id;
+            self.backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+            return Ok(Value::Tensor(tensor));
         }
 
         if name == "parameter" {
@@ -527,7 +533,10 @@ impl IrRuntime {
             }
             let data = list_numbers(&args[0], "dados")?;
             let shape = list_shape(&args[1])?;
-            return Ok(Value::Tensor(super::Tensor::new_with_dtype_on(data, shape, true, self.backend.kind(), self.dtype)?));
+            let tensor=super::Tensor::new_with_dtype_on(data.clone(),shape,true,self.backend.kind(),self.dtype)?;
+            let id=tensor.borrow().id;
+            self.backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+            return Ok(Value::Tensor(tensor));
         }
 
         if name == "zeros" {
@@ -536,7 +545,11 @@ impl IrRuntime {
             }
             let shape = list_shape(&args[0])?;
             let size = shape.iter().copied().product::<usize>();
-            return Ok(Value::Tensor(super::Tensor::new_with_dtype_on(vec![0.0; size], shape, false, self.backend.kind(), self.dtype)?));
+            let data=vec![0.0;size];
+            let tensor=super::Tensor::new_with_dtype_on(data.clone(),shape,false,self.backend.kind(),self.dtype)?;
+            let id=tensor.borrow().id;
+            self.backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+            return Ok(Value::Tensor(tensor));
         }
 
         if name == "shape" {
@@ -569,14 +582,14 @@ impl IrRuntime {
             if args.len() != 2 {
                 return Err("Nano: grad() recebe loss e parâmetro".into());
             }
-            return gradient_value(&args[0], &args[1]);
+            return gradient_value(&args[0], &args[1], self.backend.as_ref());
         }
 
         if name == "step" {
             if args.len() != 3 {
                 return Err("Nano: step() recebe parâmetro, gradiente e taxa".into());
             }
-            return step_value(&args[0], &args[1], &args[2]);
+            return step_value(&args[0], &args[1], &args[2], self.backend.as_ref());
         }
 
         if name == "adam" {
@@ -686,17 +699,18 @@ impl IrRuntime {
             return Err("Nano: FMA requer tensors no dispositivo do backend ativo".into());
         }
 
-        let data = self.backend
-            .fused_mul_add(&a.data_f32(), &b.data_f32(), &c.data_f32(), &a.shape)
-            .map_err(|e| format!("Nano: backend {}: {}", self.backend.kind().name(), e))?;
-        let shape = a.shape.clone();
+        let left_data=a.data_f32();let right_data=b.data_f32();let bias_data=c.data_f32();let shape=a.shape.clone();
+        let output_id=super::next_tensor_id();
+        let data=self.backend.fused_mul_add_resident(a.id,&left_data,b.id,&right_data,c.id,&bias_data,&shape,output_id)
+            .map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
         let dtype = DType::promote(DType::promote(a.dtype, b.dtype), c.dtype);
         let requires_grad = a.requires_grad || b.requires_grad || c.requires_grad;
         drop(a);
         drop(b);
         drop(c);
 
-        Ok(Value::Tensor(super::Tensor::derived_dtype_on(
+        Ok(Value::Tensor(super::Tensor::derived_dtype_on_with_id(
+            output_id,
             data,
             shape,
             requires_grad,
@@ -725,14 +739,13 @@ impl IrRuntime {
             (Value::Tensor(tensor), Value::Number(n), Op::Mul) |
             (Value::Number(n), Value::Tensor(tensor), Op::Mul) => {
                 let source = tensor.borrow();
-                let scalar = super::Tensor::new_with_dtype_on(
-                    vec![*n as f32; source.data_len()],
-                    source.shape.clone(),
-                    false,
-                    self.backend.kind(),
-                    source.dtype,
-                )?;
-                Ok(Value::Tensor(tensor_elementwise(tensor, &scalar, TensorOpKind::Mul, self.backend.as_ref())?))
+                let scalar_data=vec![*n as f32;source.data_len()];
+                let scalar=super::Tensor::new_with_dtype_on(scalar_data.clone(),source.shape.clone(),false,self.backend.kind(),source.dtype)?;
+                let scalar_id=scalar.borrow().id;
+                self.backend.sync_tensor(scalar_id,&scalar_data).map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
+                let out=tensor_elementwise(tensor,&scalar,TensorOpKind::Mul,self.backend.as_ref())?;
+                let _=self.backend.release_tensor(scalar_id);
+                Ok(Value::Tensor(out))
             }
             _ => binary(a, op, b),
         }
@@ -914,14 +927,13 @@ fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Va
         return Err(format!("Nano: matmul() incompatível: {}x{} com {}x{}", m, k, k2, n));
     }
 
-    let out = {
-        let l = left.borrow();
-        let r = right.borrow();
-        backend.matmul(&l.data_f32(), &l.shape, &r.data_f32(), &r.shape)
-            .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?
-    };
+    let (left_id,right_id,left_data,right_data)={let l=left.borrow();let r=right.borrow();(l.id,r.id,l.data_f32(),r.data_f32())};
+    let output_id=super::next_tensor_id();
+    let out=backend.matmul_resident(left_id,&left_data,&lshape,right_id,&right_data,&rshape,output_id)
+        .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
 
-    Ok(Value::Tensor(super::Tensor::derived_dtype_on(
+    Ok(Value::Tensor(super::Tensor::derived_dtype_on_with_id(
+        output_id,
         out,
         vec![m, n],
         requires_grad,
@@ -959,17 +971,13 @@ fn tensor_elementwise(
         TensorOpKind::Mul => ElementwiseOp::Mul,
         TensorOpKind::Div => ElementwiseOp::Div,
     };
-    let data = backend.elementwise(&left.data_f32(), &right.data_f32(), &left.shape, backend_op)
-        .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
-
-    let requires_grad = left.requires_grad || right.requires_grad;
-    let dtype = DType::promote(left.dtype, right.dtype);
-    let shape = left.shape.clone();
-    drop(left);
-    drop(right);
-
-    Ok(super::Tensor::derived_dtype_on(
-        data,
+    let left_id=left.id;let right_id=right.id;let left_data=left.data_f32();let right_data=right.data_f32();let shape=left.shape.clone();
+    let output_id=super::next_tensor_id();
+    let data=backend.elementwise_resident(left_id,&left_data,right_id,&right_data,&shape,backend_op,output_id)
+        .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+    let requires_grad=left.requires_grad||right.requires_grad;let dtype=DType::promote(left.dtype,right.dtype);
+    drop(left);drop(right);
+    Ok(super::Tensor::derived_dtype_on_with_id(output_id,data,shape,requires_grad,backend.kind(),dtype,TensorOp::Elementwise(op,std::rc::Rc::clone(a),std::rc::Rc::clone(b))))
         shape,
         requires_grad,
         backend.kind(),
@@ -1011,7 +1019,7 @@ fn reduce_value(
     )?))
 }
 
-fn gradient_value(loss: &Value, parameter: &Value) -> Result<Value, String> {
+fn gradient_value(loss: &Value, parameter: &Value, backend: &dyn TensorBackend) -> Result<Value, String> {
     let loss_ref = match loss {
         Value::Tensor(t) => std::rc::Rc::clone(t),
         _ => return Err("Nano: grad() requer Tensor como loss".into()),
@@ -1032,10 +1040,13 @@ fn gradient_value(loss: &Value, parameter: &Value) -> Result<Value, String> {
     let device = source.device;
     let dtype = source.dtype;
     drop(source);
-    Ok(Value::Tensor(super::Tensor::new_with_dtype_on(data, output_shape, false, device, dtype)?))
+    let tensor=super::Tensor::new_with_dtype_on(data.clone(),output_shape,false,device,dtype)?;
+    let id=tensor.borrow().id;
+    backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+    Ok(Value::Tensor(tensor))
 }
 
-fn step_value(parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value, String> {
+fn step_value(parameter: &Value, gradient: &Value, rate: &Value, backend: &dyn TensorBackend) -> Result<Value, String> {
     let param = match parameter {
         Value::Tensor(t) => std::rc::Rc::clone(t),
         _ => return Err("Nano: step() requer parâmetro Tensor".into()),
@@ -1063,7 +1074,9 @@ fn step_value(parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value
     for (value, delta) in data.iter_mut().zip(&gradient) {
         *value -= lr * delta;
     }
-    param.borrow_mut().set_data_f32(data);
+    let id=param.borrow().id;
+    param.borrow_mut().set_data_f32(data.clone());
+    backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
     Ok(Value::Tensor(param))
 }
 

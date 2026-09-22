@@ -233,21 +233,22 @@ impl Tensor {
         dtype: DType,
         op: TensorOp,
     ) -> Result<TensorRef, String> {
-        let expected = shape.iter().copied().product::<usize>();
-        if expected != data.len() {
-            return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}", data.len(), expected));
-        }
-        Ok(Rc::new(RefCell::new(Self {
-            id: next_tensor_id(),
-            storage: TensorStorage::from_f32(dtype, data),
-            shape,
-            dtype,
-            requires_grad,
-            device,
-            op,
-        })))
+        Self::derived_dtype_on_with_id(next_tensor_id(), data, shape, requires_grad, device, dtype, op)
     }
 
+    fn derived_dtype_on_with_id(
+        id: u64,
+        data: Vec<f32>,
+        shape: Vec<usize>,
+        requires_grad: bool,
+        device: backend::BackendKind,
+        dtype: DType,
+        op: TensorOp,
+    ) -> Result<TensorRef, String> {
+        let expected=shape.iter().copied().product::<usize>();
+        if expected!=data.len(){return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}",data.len(),expected));}
+        Ok(Rc::new(RefCell::new(Self{id,storage:TensorStorage::from_f32(dtype,data),shape,dtype,requires_grad,device,op})))
+    }
     fn data_f32(&self) -> Vec<f32> { self.storage.to_f32() }
     fn set_data_f32(&mut self, data: Vec<f32>) { self.storage = TensorStorage::from_f32(self.dtype, data); }
     fn data_len(&self) -> usize { self.storage.len() }

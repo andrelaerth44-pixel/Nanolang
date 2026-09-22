@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::mpsc;
 
 use pollster::block_on;
@@ -80,6 +82,12 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(global_invocation
 }
 "#;
 
+struct ResidentBuffer {
+    buffer: wgpu::Buffer,
+    logical_bytes: usize,
+    block: crate::memory::MemoryBlock,
+}
+
 pub(crate) struct GpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -87,7 +95,8 @@ pub(crate) struct GpuBackend {
     elementwise: wgpu::ComputePipeline,
     fma: wgpu::ComputePipeline,
     reduce: wgpu::ComputePipeline,
-    planner: MemoryPlanner,
+    planner: RefCell<MemoryPlanner>,
+    resident: RefCell<HashMap<u64, ResidentBuffer>>,
 }
 
 impl GpuBackend {
@@ -137,8 +146,59 @@ impl GpuBackend {
             elementwise,
             fma,
             reduce,
-            planner: MemoryPlanner::new(),
+            planner: RefCell::new(MemoryPlanner::new()),
+            resident: RefCell::new(HashMap::new()),
         })
+    }
+
+
+    fn resident_buffer(&self,id:u64,elements:usize)->Result<wgpu::Buffer,BackendError>{
+        if elements==0{return Err(BackendError("tensor vazio não requer buffer GPU".into()));}
+        let logical_bytes=elements.saturating_mul(DType::F32.bytes());
+        if let Some(entry)=self.resident.borrow().get(&id){
+            if entry.logical_bytes>=logical_bytes{return Ok(entry.buffer.clone());}
+        }
+        if let Some(old)=self.resident.borrow_mut().remove(&id){
+            self.planner.borrow_mut().release(old.block);
+        }
+        let block=self.planner.borrow_mut().allocate(elements,DType::F32);
+        let buffer=self.device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("nano-gpu-resident"),size:block.size as u64,
+            usage:wgpu::BufferUsages::STORAGE|wgpu::BufferUsages::COPY_SRC|wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation:false,
+        });
+        self.resident.borrow_mut().insert(id,ResidentBuffer{buffer:buffer.clone(),logical_bytes,block});
+        Ok(buffer)
+    }
+
+    fn ensure_resident(&self,id:u64,data:&[f32])->Result<wgpu::Buffer,BackendError>{
+        let logical_bytes=data.len().saturating_mul(4);
+        let had_sized=self.resident.borrow().get(&id).map(|e|e.logical_bytes>=logical_bytes).unwrap_or(false);
+        let buffer=self.resident_buffer(id,data.len())?;
+        if !had_sized && !data.is_empty(){self.queue.write_buffer(&buffer,0,&Self::bytes_f32(data));}
+        Ok(buffer)
+    }
+
+    fn dispatch_into(&self,pipeline:&wgpu::ComputePipeline,inputs:&[&wgpu::Buffer],uniform:&wgpu::Buffer,groups:(u32,u32,u32),output:&wgpu::Buffer,output_len:usize)->Result<Vec<f32>,BackendError>{
+        if output_len==0{return Ok(Vec::new());}
+        let output_bytes=self.planner.borrow().bytes_for(output_len,DType::F32);
+        let readback=self.device.create_buffer(&wgpu::BufferDescriptor{
+            label:Some("nano-gpu-readback"),size:output_bytes as u64,
+            usage:wgpu::BufferUsages::MAP_READ|wgpu::BufferUsages::COPY_DST,mapped_at_creation:false,
+        });
+        let mut entries=Vec::with_capacity(inputs.len()+2);
+        for(i,buffer)in inputs.iter().enumerate(){entries.push(wgpu::BindGroupEntry{binding:i as u32,resource:buffer.as_entire_binding()});}
+        entries.push(wgpu::BindGroupEntry{binding:inputs.len() as u32,resource:output.as_entire_binding()});
+        entries.push(wgpu::BindGroupEntry{binding:(inputs.len()+1) as u32,resource:uniform.as_entire_binding()});
+        let bind_group=self.device.create_bind_group(&wgpu::BindGroupDescriptor{label:Some("nano-gpu-resident-bind-group"),layout:&pipeline.get_bind_group_layout(0),entries:&entries});
+        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("nano-gpu-resident-command")});
+        {
+            let mut pass=encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("nano-gpu-resident-compute"),timestamp_writes:None});
+            pass.set_pipeline(pipeline);pass.set_bind_group(0,&bind_group,&[]);pass.dispatch_workgroups(groups.0,groups.1,groups.2);
+        }
+        encoder.copy_buffer_to_buffer(output,0,&readback,0,(output_len*4) as u64);
+        self.queue.submit(Some(encoder.finish()));
+        self.readback(&readback,output_len)
     }
 
     fn bytes_f32(data: &[f32]) -> Vec<u8> { data.iter().flat_map(|v| v.to_ne_bytes()).collect() }
@@ -172,7 +232,7 @@ impl GpuBackend {
 
     fn dispatch(&self, pipeline: &wgpu::ComputePipeline, inputs: &[&wgpu::Buffer], uniform: &wgpu::Buffer, groups: (u32,u32,u32), output_len: usize) -> Result<Vec<f32>, BackendError> {
         if output_len == 0 { return Ok(Vec::new()); }
-        let output_bytes = self.planner.bytes_for(output_len, DType::F32);
+        let output_bytes = self.planner.borrow().bytes_for(output_len, DType::F32);
         let output = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("nano-gpu-output"), size: output_bytes as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
@@ -203,7 +263,7 @@ impl GpuBackend {
     fn transfer_f32(&self, data: &[f32]) -> Result<Vec<f32>, BackendError> {
         if data.is_empty() { return Ok(Vec::new()); }
         let input = self.create_buffer(&Self::bytes_f32(data), wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::STORAGE);
-        let bytes = self.planner.bytes_for(data.len(), DType::F32);
+        let bytes = self.planner.borrow().bytes_for(data.len(), DType::F32);
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("nano-gpu-transfer"), size: bytes as u64,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
@@ -228,6 +288,15 @@ impl TensorBackend for GpuBackend {
         self.dispatch(&self.matmul,&[&a,&b],&params,(((n as u32)+7)/8,((m as u32)+7)/8,1),m*n)
     }
 
+    fn matmul_resident(&self,left_id:u64,left:&[f32],left_shape:&[usize],right_id:u64,right:&[f32],right_shape:&[usize],output_id:u64)->Result<Vec<f32>,BackendError>{
+        if left_shape.len()!=2||right_shape.len()!=2{return Err(BackendError("matmul GPU requer tensores 2D".into()));}
+        let(m,k)=(left_shape[0],left_shape[1]);let(k2,n)=(right_shape[0],right_shape[1]);
+        if k!=k2||left.len()!=m*k||right.len()!=k2*n{return Err(BackendError("matmul GPU recebeu shapes incompatíveis".into()));}
+        let a=self.ensure_resident(left_id,left)?;let b=self.ensure_resident(right_id,right)?;let out=self.resident_buffer(output_id,m*n)?;
+        let params=self.create_buffer(&Self::bytes_u32(&[m as u32,k as u32,n as u32,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_into(&self.matmul,&[&a,&b],&params,(((n as u32)+7)/8,((m as u32)+7)/8,1),&out,m*n)
+    }
+
     fn elementwise(&self,left:&[f32],right:&[f32],shape:&[usize],op:ElementwiseOp)->Result<Vec<f32>,BackendError>{
         let expected=shape.iter().copied().product::<usize>();
         if left.len()!=expected||right.len()!=expected||left.len()!=right.len(){return Err(BackendError("elementwise GPU recebeu buffers incompatíveis".into()));}
@@ -236,6 +305,15 @@ impl TensorBackend for GpuBackend {
         let code=match op{ElementwiseOp::Add=>0,ElementwiseOp::Sub=>1,ElementwiseOp::Mul=>2,ElementwiseOp::Div=>3};
         let params=self.create_buffer(&Self::bytes_u32(&[left.len() as u32,code,0,0]),wgpu::BufferUsages::UNIFORM);
         self.dispatch(&self.elementwise,&[&a,&b],&params,(((left.len() as u32)+255)/256,1,1),left.len())
+    }
+
+    fn elementwise_resident(&self,left_id:u64,left:&[f32],right_id:u64,right:&[f32],shape:&[usize],op:ElementwiseOp,output_id:u64)->Result<Vec<f32>,BackendError>{
+        let expected=shape.iter().copied().product::<usize>();
+        if left.len()!=expected||right.len()!=expected||left.len()!=right.len(){return Err(BackendError("elementwise GPU recebeu buffers incompatíveis".into()));}
+        let a=self.ensure_resident(left_id,left)?;let b=self.ensure_resident(right_id,right)?;let out=self.resident_buffer(output_id,left.len())?;
+        let code=match op{ElementwiseOp::Add=>0,ElementwiseOp::Sub=>1,ElementwiseOp::Mul=>2,ElementwiseOp::Div=>3};
+        let params=self.create_buffer(&Self::bytes_u32(&[left.len() as u32,code,0,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_into(&self.elementwise,&[&a,&b],&params,(((left.len() as u32)+255)/256,1,1),&out,left.len())
     }
 
     fn fused_mul_add(
@@ -265,6 +343,26 @@ impl TensorBackend for GpuBackend {
             (((left.len() as u32) + 255) / 256, 1, 1),
             left.len(),
         )
+    }
+
+    fn fused_mul_add_resident(&self,left_id:u64,left:&[f32],right_id:u64,right:&[f32],bias_id:u64,bias:&[f32],shape:&[usize],output_id:u64)->Result<Vec<f32>,BackendError>{
+        let expected=shape.iter().copied().product::<usize>();
+        if left.len()!=expected||right.len()!=expected||bias.len()!=expected{return Err(BackendError("fused_mul_add GPU recebeu buffers incompatíveis".into()));}
+        let a=self.ensure_resident(left_id,left)?;let b=self.ensure_resident(right_id,right)?;let c=self.ensure_resident(bias_id,bias)?;let out=self.resident_buffer(output_id,left.len())?;
+        let params=self.create_buffer(&Self::bytes_u32(&[left.len() as u32,0,0,0]),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_into(&self.fma,&[&a,&b,&c],&params,(((left.len() as u32)+255)/256,1,1),&out,left.len())
+    }
+
+    fn sync_tensor(&self,id:u64,data:&[f32])->Result<(),BackendError>{
+        if data.is_empty(){return Ok(());}
+        let buffer=self.resident_buffer(id,data.len())?;
+        self.queue.write_buffer(&buffer,0,&Self::bytes_f32(data));
+        Ok(())
+    }
+
+    fn release_tensor(&self,id:u64)->Result<(),BackendError>{
+        if let Some(entry)=self.resident.borrow_mut().remove(&id){self.planner.borrow_mut().release(entry.block);}
+        Ok(())
     }
 
     fn reduce(&self,data:&[f32],mean:bool)->Result<f32,BackendError>{

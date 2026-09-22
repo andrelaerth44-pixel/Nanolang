@@ -50,6 +50,15 @@ pub(crate) trait TensorBackend {
         right_shape: &[usize],
     ) -> Result<Vec<f32>, BackendError>;
 
+    fn matmul_resident(
+        &self,
+        _left_id: u64, left: &[f32], left_shape: &[usize],
+        _right_id: u64, right: &[f32], right_shape: &[usize],
+        _output_id: u64,
+    ) -> Result<Vec<f32>, BackendError> {
+        self.matmul(left, left_shape, right, right_shape)
+    }
+
     fn elementwise(
         &self,
         left: &[f32],
@@ -57,6 +66,16 @@ pub(crate) trait TensorBackend {
         shape: &[usize],
         op: ElementwiseOp,
     ) -> Result<Vec<f32>, BackendError>;
+
+    fn elementwise_resident(
+        &self,
+        _left_id: u64, left: &[f32],
+        _right_id: u64, right: &[f32],
+        shape: &[usize], op: ElementwiseOp,
+        _output_id: u64,
+    ) -> Result<Vec<f32>, BackendError> {
+        self.elementwise(left, right, shape, op)
+    }
 
     fn fused_mul_add(
         &self,
@@ -66,7 +85,21 @@ pub(crate) trait TensorBackend {
         shape: &[usize],
     ) -> Result<Vec<f32>, BackendError>;
 
+    fn fused_mul_add_resident(
+        &self,
+        _left_id: u64, left: &[f32],
+        _right_id: u64, right: &[f32],
+        _bias_id: u64, bias: &[f32],
+        shape: &[usize], _output_id: u64,
+    ) -> Result<Vec<f32>, BackendError> {
+        self.fused_mul_add(left, right, bias, shape)
+    }
+
     fn reduce(&self, data: &[f32], mean: bool) -> Result<f32, BackendError>;
+
+    fn sync_tensor(&self, _id: u64, _data: &[f32]) -> Result<(), BackendError> { Ok(()) }
+    fn release_tensor(&self, _id: u64) -> Result<(), BackendError> { Ok(()) }
+
     fn transfer(&self, data: &[f32]) -> Result<Vec<f32>, BackendError>;
 }
 
