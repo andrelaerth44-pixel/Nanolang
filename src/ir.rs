@@ -1298,7 +1298,7 @@ impl IrRuntime {
                 Value::Object(object) => object,
                 _ => return Err("Nano: error() requer Result".into()),
             };
-            return Ok(object.get("error").map(Value::show).unwrap_or_default().into());
+            return Ok(Value::Text(object.get("error").map(Value::show).unwrap_or_default()));
         }
 
         if name == "assert" {
