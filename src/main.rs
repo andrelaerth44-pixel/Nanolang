@@ -833,6 +833,34 @@ impl Semantic {
                 }
                 Ok(())
             }
+            Stmt::AssignIndex(target, index, value) => {
+                let target_ty = self.expr_type(target)?;
+                let index_ty = self.expr_type(index)?;
+                let value_ty = self.expr_type(value)?;
+                match target_ty {
+                    Type::List | Type::Any => {
+                        if index_ty != Type::Number && index_ty != Type::Any {
+                            return Err(format!("Nano: lista requer índice Number, recebido {}", index_ty.name()));
+                        }
+                    }
+                    Type::Object => {
+                        if index_ty != Type::Text && index_ty != Type::Any {
+                            return Err(format!("Nano: Object requer chave Text, recebido {}", index_ty.name()));
+                        }
+                    }
+                    other => return Err(format!("Nano: atribuição por índice requer List/Object, recebido {}", other.name())),
+                }
+                let _ = value_ty;
+                Ok(())
+            }
+            Stmt::AssignField(target, _, value) => {
+                let target_ty = self.expr_type(target)?;
+                let _value_ty = self.expr_type(value)?;
+                if target_ty != Type::Object && target_ty != Type::Any {
+                    return Err(format!("Nano: atribuição por campo requer Object, recebido {}", target_ty.name()));
+                }
+                Ok(())
+            }
             Stmt::Print(expr) | Stmt::Expr(expr) => { self.expr_type(expr)?; Ok(()) }
             Stmt::If(cond, yes, no) => {
                 self.expr_type(cond)?;
