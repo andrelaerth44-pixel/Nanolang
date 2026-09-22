@@ -45,6 +45,9 @@ jobs:
       - name: Cargo test
         run: cargo test --all-targets
 
+      - name: GPU shader end to end
+        run: NANO_GPU_E2E=1 cargo test --all-targets gpu_matmul_can_execute_with_fallback_adapter -- --exact
+
       - name: NPU provider end to end
         run: |
           cargo build --quiet --bin nano-npu-provider-reference --bin nano
