@@ -100,7 +100,10 @@ jobs:
       - name: Self-host bootstrap
         run: |
           cargo run --quiet --bin nano -- check selfhost/bootstrap.nano
-          cargo run --quiet --bin nano -- run selfhost/bootstrap.nano
+          cargo run --quiet --bin nano -- run selfhost/bootstrap.nano > /tmp/nano-selfhost.ir
+          test -s /tmp/nano-selfhost.ir
+          grep -q "const " /tmp/nano-selfhost.ir
+          grep -q "call " /tmp/nano-selfhost.ir
 
       - name: UI syntax check
         run: cargo run --quiet --bin nano -- check examples/ui.nano
