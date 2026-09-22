@@ -32,13 +32,27 @@ net_http_get, net_tcp_connect, net_tcp_listen, net_tcp_accept, net_tcp_send, net
 
 A camada atual fornece TCP direto. HTTP de alto nível pode ser construído sobre essa API.
 
+## HTTP
+
+http_request, http_post e http_get_structured fornecem respostas estruturadas com status, reason, headers e body. https_get usa curl quando disponível.
+
+## Crypto
+
+std.crypto.sha256 e std.crypto.hmac_sha256 fornecem hashing e autenticação HMAC-SHA256.
+
+## Sync
+
+std.sync fornece mutexes compartilhados, semáforos e canais globais seguros entre threads, incluindo recv_timeout e try_recv.
+
 ## JSON
 
 std.json.encode e std.json.decode fazem conversão entre Text JSON e os tipos Nano compatíveis: Number, Boolean, Text, Null, List e Object.
 
 ## UI
 
-ui_window, ui_set_title, ui_close, ui_poll_event, ui_wait_event.
+ui_window, ui_set_title, ui_clear, ui_rect, ui_button, ui_close, ui_poll_event, ui_wait_event.
+
+A camada 2D usa wgpu para renderizar retângulos e botões e faz hit-testing de clique no runtime da janela.
 
 A implementação atual cria uma janela desktop nativa e entrega eventos de criação, resize, teclado, mouse, modificadores e fechamento. `ui_poll_event` é não bloqueante; `ui_wait_event` aguarda o próximo evento.
 
@@ -56,9 +70,16 @@ Estes imports são reconhecidos pelo runtime:
 - std.math
 - std.path
 - std.json
+- std.http
+- std.crypto
+- std.sync
 - std.os
 
 Os nomes dos módulos formam o contrato de organização; as funções acima são a superfície runtime atualmente implementada.
+
+## Self-host nativo
+
+nano build --selfhost arquivo.nano executa o lexer/parser/validador/compiler escritos em Nano para produzir IR textual, reimporta esse IR e envia o programa ao backend nativo x86_64 Linux.
 
 ## Backend e hardware
 
