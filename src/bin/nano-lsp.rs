@@ -62,7 +62,9 @@ fn main() {
             .unwrap_or("");
 
         if method.starts_with("$/") || id.is_none() {
-            handle_notification(&mut server, &request);
+            if let Some(notification) = handle_notification(&mut server, &request) {
+                write_lsp(&mut out, &notification);
+            }
         } else {
             let result = handle_request(&mut server, method, &request);
             let response = json!({
@@ -80,14 +82,16 @@ fn main() {
     }
 }
 
-fn handle_notification(server: &mut Server, request: &Value) {
-    match request.get("method").and_then(Value::as_str).unwrap_or("") {
-        "initialized" | "$/cancelRequest" => {}
+fn handle_notification(server: &mut Server, request: &Value) -> Option<Value> {
+    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    match method {
+        "initialized" | "$/cancelRequest" => return None,
         "textDocument/didOpen" => {
             let Some(item) = request.pointer("/params/textDocument") else { return; };
             let uri = item.get("uri").and_then(Value::as_str).unwrap_or("").to_string();
             let text = item.get("text").and_then(Value::as_str).unwrap_or("").to_string();
-            server.documents.insert(uri, text);
+            server.documents.insert(uri.clone(), text.clone());
+            return Some(publish_diagnostics(&uri, &text));
         }
         "textDocument/didChange" => {
             let Some(params) = request.get("params") else { return; };
@@ -99,17 +103,41 @@ fn handle_notification(server: &mut Server, request: &Value) {
             let Some(changes) = params.get("contentChanges").and_then(Value::as_array) else { return; };
             if let Some(change) = changes.last() {
                 if let Some(text) = change.get("text").and_then(Value::as_str) {
-                    server.documents.insert(uri, text.to_string());
+                    server.documents.insert(uri.clone(), text.to_string());
+                    return Some(publish_diagnostics(&uri, text));
                 }
             }
+            None
         }
         "textDocument/didClose" => {
             if let Some(uri) = request.pointer("/params/textDocument/uri").and_then(Value::as_str) {
                 server.documents.remove(uri);
             }
+            None
         }
-        _ => {}
+        _ => None,
     }
+}
+
+fn publish_diagnostics(uri: &str, text: &str) -> Value {
+    let diagnostics: Vec<Value> = analyze(text).into_iter().map(|d| json!({
+        "range": {
+            "start": { "line": d.line, "character": d.character },
+            "end": { "line": d.end_line, "character": d.end_character }
+        },
+        "severity": d.severity,
+        "source": "nano",
+        "message": d.message
+    })).collect();
+
+    json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": uri,
+            "diagnostics": diagnostics
+        }
+    })
 }
 
 fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
