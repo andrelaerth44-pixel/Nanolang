@@ -1308,6 +1308,13 @@ impl Semantic {
                     if args.len() != 1 { return Err("Nano: ui_close() recebe handle".into()); }
                     return Ok(Type::Null);
                 }
+                if name == "ui_wait_event" {
+                    if args.len() != 1 { return Err("Nano: ui_wait_event() recebe handle".into()); }
+                    if self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any {
+                        return Err("Nano: ui_wait_event() requer Number".into());
+                    }
+                    return Ok(Type::Text);
+                }
                 if name == "ui_poll_event" {
                     if args.len() != 1 { return Err("Nano: ui_poll_event() recebe handle".into()); }
                     if self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any {
