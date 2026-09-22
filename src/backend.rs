@@ -363,6 +363,21 @@ mod tests {
     }
 
     #[test]
+    fn cpu_transposed_matmul_is_correct() {
+        let backend = CpuBackend;
+        let out = backend
+            .matmul_transposed(
+                &[1.0, 2.0, 3.0, 4.0],
+                &[2, 2],
+                &[5.0, 6.0, 7.0, 8.0],
+                &[2, 2],
+                true,
+                false,
+            )
+            .unwrap();
+        assert_eq!(out, vec![26.0, 30.0, 38.0, 44.0]);
+    }
+    #[test]
     fn cpu_elementwise_and_reduce_are_correct() {
         let backend = CpuBackend;
         let add = backend
