@@ -665,6 +665,9 @@ fn main() {
         }
     };
 
+    let mut optimizer = ir::Optimizer::new();
+    let ir_program = optimizer.optimize_program(ir_program);
+
     if let Err(e) = ir::IrRuntime::new().run(&ir_program) {
         eprintln!("{e}");
         process::exit(1);
