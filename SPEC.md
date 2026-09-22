@@ -1,4 +1,4 @@
-# Nano 0.4 — Especificação inicial
+# Nano 0.5 — Especificação inicial
 
 ## 1. Arquivos
 
@@ -179,6 +179,7 @@ Tipos-base atuais:
 - Boolean
 - List
 - Object
+- Tensor
 - Null
 - Any interno
 
@@ -234,6 +235,32 @@ message = "idade: " + total
 
 Funções e módulos que ainda não permitem descobrir um tipo com segurança usam `Any` internamente. Isso mantém a sintaxe pequena e evita exigir anotações de tipo.
 
+## 7. Dados e Tensor
+
+Tensor é um tipo nativo para dados numéricos multidimensionais.
+
+Exemplo:
+
+```nano
+a = tensor([1, 2, 3, 4], [2, 2])
+b = tensor([5, 6, 7, 8], [2, 2])
+
+c = matmul(a, b)
+
+print shape(c)
+```
+
+Primitivas iniciais:
+
+- `tensor(dados, shape)`
+- `zeros(shape)`
+- `shape(tensor)`
+- `matmul(a, b)`
+- `len(tensor)`
+
+A implementação inicial usa dados `f32` e `matmul` 2D em CPU. Isso é apenas o primeiro degrau da infraestrutura de IA; não representa ainda treinamento GPU.
+
+
 ## 7. Execução
 
 Nano 0.4 possui um runtime próprio e uma camada de verificação semântica.
@@ -260,7 +287,7 @@ Nano IR
 
 A camada de tipos é uma etapa do compilador; ela não adiciona sintaxe obrigatória ao programador.
 
-## 8. Self-host
+## 9. Self-host
 
 O bootstrap inicial pode ser escrito em Rust apenas para dar nascimento à ferramentachain.
 
@@ -278,14 +305,14 @@ Nano compila Nano
 
 Quando o compilador Nano conseguir compilar o seu próprio código-fonte usando uma versão anterior funcional do compilador, teremos atingido o núcleo do self-host.
 
-## 9. Regra de simplicidade
+## 10. Regra de simplicidade
 
 A sintaxe deve continuar pequena mesmo quando a plataforma ganhar capacidades avançadas.
 
 O poder deve vir principalmente da composição da linguagem, biblioteca padrão, runtime, IR, compilador e ferramentas, não de centenas de palavras-chave.
 
 
-## 7. Nano IR
+## 8. Nano IR
 
 Nano 0.4 já possui uma primeira implementação de IR.
 
