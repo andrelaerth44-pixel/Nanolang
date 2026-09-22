@@ -650,6 +650,97 @@ impl IrRuntime {
             return Ok(Value::Null);
         }
 
+        if name == "to_text" {
+            if args.len() != 1 { return Err("Nano: to_text() recebe 1 argumento".into()); }
+            return Ok(Value::Text(args[0].show()));
+        }
+
+        if name == "to_number" {
+            if args.len() != 1 { return Err("Nano: to_number() recebe 1 Text".into()); }
+            let value = text_arg(&args[0], "texto")?;
+            let number = value.parse::<f64>().map_err(|_| format!("Nano: to_number(): '{value}' não é Number"))?;
+            return Ok(Value::Number(number));
+        }
+
+        if matches!(name, "upper" | "lower" | "trim") {
+            if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Text")); }
+            let value = text_arg(&args[0], "texto")?;
+            let output = match name {
+                "upper" => value.to_uppercase(),
+                "lower" => value.to_lowercase(),
+                _ => value.trim().to_string(),
+            };
+            return Ok(Value::Text(output));
+        }
+
+        if matches!(name, "contains" | "starts_with" | "ends_with") {
+            if args.len() != 2 { return Err(format!("Nano: {name}() recebe 2 Text")); }
+            let value = text_arg(&args[0], "texto")?;
+            let needle = text_arg(&args[1], "texto")?;
+            let result = match name {
+                "contains" => value.contains(&needle),
+                "starts_with" => value.starts_with(&needle),
+                _ => value.ends_with(&needle),
+            };
+            return Ok(Value::Boolean(result));
+        }
+
+        if name == "replace" {
+            if args.len() != 3 { return Err("Nano: replace() recebe texto, antigo e novo".into()); }
+            let value = text_arg(&args[0], "texto")?;
+            let from = text_arg(&args[1], "antigo")?;
+            let to = text_arg(&args[2], "novo")?;
+            return Ok(Value::Text(value.replace(&from, &to)));
+        }
+
+        if name == "substring" {
+            if args.len() != 3 { return Err("Nano: substring() recebe texto, início e fim".into()); }
+            let value = text_arg(&args[0], "texto")?;
+            let start = integer_arg(&args[1], "início")? as usize;
+            let end = integer_arg(&args[2], "fim")? as usize;
+            let chars: Vec<char> = value.chars().collect();
+            if start > end || end > chars.len() {
+                return Err("Nano: substring() possui limites fora do texto".into());
+            }
+            return Ok(Value::Text(chars[start..end].iter().collect()));
+        }
+
+        if name == "char_at" {
+            if args.len() != 2 { return Err("Nano: char_at() recebe texto e índice".into()); }
+            let value = text_arg(&args[0], "texto")?;
+            let index = integer_arg(&args[1], "índice")? as usize;
+            let ch = value.chars().nth(index)
+                .ok_or_else(|| "Nano: char_at() índice fora do limite".to_string())?;
+            return Ok(Value::Text(ch.to_string()));
+        }
+
+        if name == "split" {
+            if args.len() != 2 { return Err("Nano: split() recebe texto e separador".into()); }
+            let value = text_arg(&args[0], "texto")?;
+            let separator = text_arg(&args[1], "separador")?;
+            return Ok(Value::List(value.split(&separator).map(|v| Value::Text(v.to_string())).collect()));
+        }
+
+        if name == "join" {
+            if args.len() != 2 { return Err("Nano: join() recebe lista e separador".into()); }
+            let items = match &args[0] {
+                Value::List(items) => items,
+                _ => return Err("Nano: join() requer List".into()),
+            };
+            let separator = text_arg(&args[1], "separador")?;
+            return Ok(Value::Text(items.iter().map(Value::show).collect::<Vec<_>>().join(&separator)));
+        }
+
+        if name == "append" {
+            if args.len() != 2 { return Err("Nano: append() recebe lista e valor".into()); }
+            let mut items = match &args[0] {
+                Value::List(items) => items.clone(),
+                _ => return Err("Nano: append() requer List".into()),
+            };
+            items.push(args[1].clone());
+            return Ok(Value::List(items));
+        }
+
         if name == "len" {
             if args.len() != 1 {
                 return Err("Nano: len() recebe 1 argumento".into());
