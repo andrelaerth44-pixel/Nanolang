@@ -42,7 +42,7 @@ impl ApplicationHandler for UiApp {
         match event_loop.create_window(attributes) {
             Ok(window) => {
                 self.window_id = Some(window.id());
-                let _ = self.events.send(format!("created:{}", window.id().into()));
+                let _ = self.events.send(format!("created:{}", format!("{:?}", window.id())));
                 self.window = Some(window);
             }
             Err(error) => {
