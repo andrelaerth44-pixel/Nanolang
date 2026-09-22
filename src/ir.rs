@@ -590,7 +590,7 @@ impl IrRuntime {
             (Value::Tensor(tensor), Value::Number(n), Op::Mul) |
             (Value::Number(n), Value::Tensor(tensor), Op::Mul) => {
                 let scalar = super::Tensor::new(vec![*n as f32; tensor.borrow().data.len()], tensor.borrow().shape.clone(), false)?;
-                Ok(Value::Tensor(tensor_elementwise(tensor, &scalar, TensorOpKind::Mul)?))
+                Ok(Value::Tensor(tensor_elementwise(tensor, &scalar, TensorOpKind::Mul, self.backend.as_ref())?))
             }
             _ => binary(a, op, b),
         }
