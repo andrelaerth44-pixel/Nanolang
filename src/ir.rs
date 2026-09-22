@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 
-use super::{Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
+use super::{backend, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
+use backend::{ElementwiseOp, TensorBackend};
 
 #[derive(Debug, Clone)]
 pub(crate) enum IrInst {
@@ -701,20 +702,13 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
         return Err(format!("Nano: matmul() incompatível: {}x{} com {}x{}", m, k, k2, n));
     }
 
-    let mut out = vec![0.0_f32; m * n];
-    {
+    let backend = backend::cpu();
+    let out = {
         let l = left.borrow();
         let r = right.borrow();
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0.0_f32;
-                for x in 0..k {
-                    sum += l.data[i * k + x] * r.data[x * n + j];
-                }
-                out[i * n + j] = sum;
-            }
-        }
-    }
+        backend.matmul(&l.data, &l.shape, &r.data, &r.shape)
+            .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?
+    };
 
     Ok(Value::Tensor(super::Tensor::derived(
         out,
@@ -732,20 +726,24 @@ fn tensor_elementwise(a: &TensorRef, b: &TensorRef, op: TensorOpKind) -> Result<
         return Err("Nano: Tensor elementwise requer shapes iguais".into());
     }
 
-    let data = left.data.iter().zip(&right.data).map(|(x, y)| match op {
-        TensorOpKind::Add => x + y,
-        TensorOpKind::Sub => x - y,
-        TensorOpKind::Mul => x * y,
-        TensorOpKind::Div => x / y,
-    }).collect::<Vec<_>>();
+    let backend = backend::cpu();
+    let backend_op = match op {
+        TensorOpKind::Add => ElementwiseOp::Add,
+        TensorOpKind::Sub => ElementwiseOp::Sub,
+        TensorOpKind::Mul => ElementwiseOp::Mul,
+        TensorOpKind::Div => ElementwiseOp::Div,
+    };
+    let data = backend.elementwise(&left.data, &right.data, &left.shape, backend_op)
+        .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
 
     let requires_grad = left.requires_grad || right.requires_grad;
+    let shape = left.shape.clone();
     drop(left);
     drop(right);
 
     Ok(super::Tensor::derived(
         data,
-        a.borrow().shape.clone(),
+        shape,
         requires_grad,
         TensorOp::Elementwise(op, std::rc::Rc::clone(a), std::rc::Rc::clone(b)),
     )?)
@@ -757,9 +755,9 @@ fn reduce_value(value: &Value, mean: bool) -> Result<Value, String> {
         _ => return Err("Nano: redução requer Tensor".into()),
     };
     let borrowed = tensor.borrow();
-    let count = borrowed.data.len();
-    let sum = borrowed.data.iter().copied().sum::<f32>();
-    let result = if mean { sum / count.max(1) as f32 } else { sum };
+    let backend = backend::cpu();
+    let result = backend.reduce(&borrowed.data, mean)
+        .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     let op = if mean { TensorOp::Mean(std::rc::Rc::clone(&tensor)) } else { TensorOp::Sum(std::rc::Rc::clone(&tensor)) };
     let requires_grad = borrowed.requires_grad;
     drop(borrowed);
