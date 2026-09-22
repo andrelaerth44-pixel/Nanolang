@@ -11,12 +11,30 @@ use winit::{
     window::{Window, WindowId},
 };
 
+pub(crate) enum UiWidgetSpec {
+    Text {
+        text: String,
+        size: f32,
+        color: [f32; 4],
+    },
+    Button {
+        id: String,
+        label: String,
+        color: [f32; 4],
+    },
+    Rect {
+        color: [f32; 4],
+    },
+}
+
 pub(crate) enum UiCommand {
     SetTitle(String),
     Close,
     Clear([f32; 4]),
     Rect { x: f32, y: f32, width: f32, height: f32, color: [f32; 4] },
     Button { id: String, x: f32, y: f32, width: f32, height: f32, color: [f32; 4] },
+    Text { text: String, x: f32, y: f32, size: f32, color: [f32; 4] },
+    VBox { x: f32, y: f32, width: f32, row_height: f32, gap: f32, children: Vec<UiWidgetSpec> },
 }
 
 pub(crate) struct UiHandle {
@@ -37,6 +55,64 @@ struct Button {
     id: String,
     rect: Rect,
 }
+
+#[derive(Clone)]
+struct TextItem {
+    text: String,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: [f32; 4],
+}
+
+fn glyph(c: char) -> [u8; 7] {
+    match c.to_ascii_uppercase() {
+        'A' => [0b01110,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001],
+        'B' => [0b11110,0b10001,0b10001,0b11110,0b10001,0b10001,0b11110],
+        'C' => [0b01111,0b10000,0b10000,0b10000,0b10000,0b10000,0b01111],
+        'D' => [0b11110,0b10001,0b10001,0b10001,0b10001,0b10001,0b11110],
+        'E' => [0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b11111],
+        'F' => [0b11111,0b10000,0b10000,0b11110,0b10000,0b10000,0b10000],
+        'G' => [0b01111,0b10000,0b10000,0b10111,0b10001,0b10001,0b01111],
+        'H' => [0b10001,0b10001,0b10001,0b11111,0b10001,0b10001,0b10001],
+        'I' => [0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b11111],
+        'J' => [0b00111,0b00010,0b00010,0b00010,0b00010,0b10010,0b01100],
+        'K' => [0b10001,0b10010,0b10100,0b11000,0b10100,0b10010,0b10001],
+        'L' => [0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b11111],
+        'M' => [0b10001,0b11011,0b10101,0b10101,0b10001,0b10001,0b10001],
+        'N' => [0b10001,0b11001,0b10101,0b10011,0b10001,0b10001,0b10001],
+        'O' => [0b01110,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110],
+        'P' => [0b11110,0b10001,0b10001,0b11110,0b10000,0b10000,0b10000],
+        'Q' => [0b01110,0b10001,0b10001,0b10001,0b10101,0b10010,0b01101],
+        'R' => [0b11110,0b10001,0b10001,0b11110,0b10100,0b10010,0b10001],
+        'S' => [0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110],
+        'T' => [0b11111,0b00100,0b00100,0b00100,0b00100,0b00100,0b00100],
+        'U' => [0b10001,0b10001,0b10001,0b10001,0b10001,0b10001,0b01110],
+        'V' => [0b10001,0b10001,0b10001,0b10001,0b10001,0b01010,0b00100],
+        'W' => [0b10001,0b10001,0b10001,0b10101,0b10101,0b11011,0b10001],
+        'X' => [0b10001,0b10001,0b01010,0b00100,0b01010,0b10001,0b10001],
+        'Y' => [0b10001,0b10001,0b01010,0b00100,0b00100,0b00100,0b00100],
+        'Z' => [0b11111,0b00001,0b00010,0b00100,0b01000,0b10000,0b11111],
+        '0' => [0b01110,0b10011,0b10101,0b10101,0b10101,0b11001,0b01110],
+        '1' => [0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110],
+        '2' => [0b01110,0b10001,0b00001,0b00010,0b00100,0b01000,0b11111],
+        '3' => [0b11110,0b00001,0b00001,0b01110,0b00001,0b00001,0b11110],
+        '4' => [0b00010,0b00110,0b01010,0b10010,0b11111,0b00010,0b00010],
+        '5' => [0b11111,0b10000,0b10000,0b11110,0b00001,0b00001,0b11110],
+        '6' => [0b01110,0b10000,0b10000,0b11110,0b10001,0b10001,0b01110],
+        '7' => [0b11111,0b00001,0b00010,0b00100,0b01000,0b01000,0b01000],
+        '8' => [0b01110,0b10001,0b10001,0b01110,0b10001,0b10001,0b01110],
+        '9' => [0b01110,0b10001,0b10001,0b01111,0b00001,0b00001,0b01110],
+        '!' => [0b00100,0b00100,0b00100,0b00100,0b00100,0b00000,0b00100],
+        '.' => [0b00000,0b00000,0b00000,0b00000,0b00000,0b00110,0b00110],
+        ':' => [0b00000,0b00110,0b00110,0b00000,0b00110,0b00110,0b00000],
+        '-' => [0b00000,0b00000,0b00000,0b11111,0b00000,0b00000,0b00000],
+        '_' => [0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b11111],
+        '/' => [0b00001,0b00010,0b00010,0b00100,0b01000,0b01000,0b10000],
+        _ => [0,0,0,0,0,0,0],
+    }
+}
+
 
 struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -164,16 +240,16 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn render(&self, clear: [f32; 4], rects: &[Rect]) -> Result<(), String> {
+    fn render(&self, clear: [f32; 4], rects: &[Rect], texts: &[TextItem]) -> Result<(), String> {
         let output = self.surface.get_current_texture()
             .map_err(|e| format!("Nano UI: surface texture: {e}"))?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let width = self.config.width.max(1) as f32;
         let height = self.config.height.max(1) as f32;
-        let mut vertices: Vec<f32> = Vec::with_capacity(rects.len() * 6 * 6);
+        let mut vertices: Vec<f32> = Vec::with_capacity((rects.len() + texts.len() * 64) * 6 * 6);
 
-        for rect in rects {
+        let mut emit_rect = |rect: Rect| {
             let x0 = rect.x / width * 2.0 - 1.0;
             let x1 = (rect.x + rect.width) / width * 2.0 - 1.0;
             let y0 = 1.0 - rect.y / height * 2.0;
@@ -182,7 +258,39 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
             for (x, y) in [(x0,y0),(x1,y0),(x1,y1),(x0,y0),(x1,y1),(x0,y1)] {
                 vertices.extend([x, y, c[0], c[1], c[2], c[3]]);
             }
+        };
+
+        for &rect in rects {
+            emit_rect(rect);
         }
+
+        for text in texts {
+            let pixel = (text.size / 7.0).max(1.0);
+            let advance = pixel * 6.0;
+            let mut cursor_x = text.x;
+            for ch in text.text.chars() {
+                if ch == ' ' {
+                    cursor_x += advance;
+                    continue;
+                }
+                let rows = glyph(ch);
+                for (row, bits) in rows.iter().enumerate() {
+                    for col in 0..5 {
+                        if bits & (1 << (4 - col)) != 0 {
+                            emit_rect(Rect {
+                                x: cursor_x + col as f32 * pixel,
+                                y: text.y + row as f32 * pixel,
+                                width: pixel,
+                                height: pixel,
+                                color: text.color,
+                            });
+                        }
+                    }
+                }
+                cursor_x += advance;
+            }
+        }
+
         if !vertices.is_empty() {
             let bytes: Vec<u8> = vertices.iter().flat_map(|value| value.to_ne_bytes()).collect();
             if bytes.len() > self.vertex_buffer.size() as usize {
@@ -234,6 +342,7 @@ struct UiApp {
     clear: [f32; 4],
     rects: Vec<Rect>,
     buttons: Vec<Button>,
+    texts: Vec<TextItem>,
     cursor: (f32, f32),
 }
 
@@ -298,7 +407,7 @@ impl ApplicationHandler for UiApp {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(renderer) = &self.renderer {
-                    if let Err(error) = renderer.render(self.clear, &self.rects) {
+                    if let Err(error) = renderer.render(self.clear, &self.rects, &self.texts) {
                         let _ = self.events.send(format!("error:{error}"));
                     }
                 }
@@ -319,6 +428,7 @@ impl ApplicationHandler for UiApp {
                     self.clear = color;
                     self.rects.clear();
                     self.buttons.clear();
+                    self.texts.clear();
                 }
                 UiCommand::Rect { x, y, width, height, color } => {
                     self.rects.push(Rect { x, y, width, height, color });
@@ -326,7 +436,56 @@ impl ApplicationHandler for UiApp {
                 UiCommand::Button { id, x, y, width, height, color } => {
                     let rect = Rect { x, y, width, height, color };
                     self.rects.push(rect);
+                    let label = id.clone();
                     self.buttons.push(Button { id, rect });
+                    self.texts.push(TextItem {
+                        text: label,
+                        x: x + 8.0,
+                        y: y + ((height - 14.0).max(0.0) * 0.5),
+                        size: 14.0,
+                        color: [1.0, 1.0, 1.0, 1.0],
+                    });
+                }
+                UiCommand::Text { text, x, y, size, color } => {
+                    self.texts.push(TextItem { text, x, y, size, color });
+                }
+                UiCommand::VBox { x, y, width, row_height, gap, children } => {
+                    let mut current_y = y;
+                    for child in children {
+                        match child {
+                            UiWidgetSpec::Text { text, size, color } => {
+                                self.texts.push(TextItem {
+                                    text,
+                                    x: x + 8.0,
+                                    y: current_y + 4.0,
+                                    size,
+                                    color,
+                                });
+                            }
+                            UiWidgetSpec::Button { id, label, color } => {
+                                let rect = Rect {
+                                    x,
+                                    y: current_y,
+                                    width,
+                                    height: row_height,
+                                    color,
+                                };
+                                self.rects.push(rect);
+                                self.buttons.push(Button { id, rect });
+                                self.texts.push(TextItem {
+                                    text: label,
+                                    x: x + 8.0,
+                                    y: current_y + ((row_height - 14.0).max(0.0) * 0.5),
+                                    size: 14.0,
+                                    color: [1.0, 1.0, 1.0, 1.0],
+                                });
+                            }
+                            UiWidgetSpec::Rect { color } => {
+                                self.rects.push(Rect { x, y: current_y, width, height: row_height, color });
+                            }
+                        }
+                        current_y += row_height + gap;
+                    }
                 }
                 UiCommand::Close => {
                     let _ = self.events.send("closed".into());
@@ -366,6 +525,7 @@ pub(crate) fn spawn(title: String, width: f64, height: f64) -> Result<UiHandle, 
             clear: [0.08, 0.08, 0.10, 1.0],
             rects: Vec::new(),
             buttons: Vec::new(),
+            texts: Vec::new(),
             cursor: (0.0, 0.0),
         };
 
