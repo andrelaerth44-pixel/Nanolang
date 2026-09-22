@@ -52,6 +52,23 @@ Bootstrap atual:
 cargo run -- run examples/main.nano
 ```
 
+Selecione o backend explicitamente:
+
+```bash
+cargo run -- run --backend cpu examples/tensor.nano
+cargo run -- run --backend gpu examples/tensor.nano
+```
+
+O backend `gpu` já é reconhecido, mas ainda falha explicitamente porque o kernel GPU real ainda não foi implementado.
+
+A mesma seleção pode ser feita com:
+
+```bash
+NANO_BACKEND=cpu cargo run -- run examples/tensor.nano
+```
+
+A opção `--backend` tem prioridade sobre `NANO_BACKEND`.
+
 Ou, dentro de um projeto:
 
 ```bash
@@ -91,6 +108,8 @@ O núcleo atual contém:
 - módulos com `use`;
 - tipo nativo `Tensor`;
 - `tensor()`, `parameter()`, `zeros()`, `shape()`, `matmul()`, `sum()` e `mean()`;
+- introspecção com `backend()` e `device()`;
+- seleção explícita de backend no CLI;
 - autograd com `grad()`;
 - atualização de parâmetros com `step()`;
 - otimizador Adam com `adam()`;
@@ -101,7 +120,7 @@ O núcleo atual contém:
 
 A regra é: capacidades novas não devem transformar Nano numa linguagem cheia de declarações obrigatórias.
 
-O próximo foco é transformar o Tensor em uma infraestrutura de computação real: operações vetorizadas, tipos de precisão, otimização do grafo, data loading, memória planejada e backends GPU.
+O próximo foco é transformar o Tensor em uma infraestrutura de computação real: operações vetorizadas, tipos de precisão, otimização do grafo, memória planejada, transferência entre dispositivos e backends GPU reais.
 
 A meta de engenharia é permitir código Nano muito curto para dados e IA. Suporte a treinamento de modelos muito grandes, incluindo uma classe de 5 bilhões de parâmetros, será tratado como uma meta de backend e memória — não como uma promessa de que a VM atual já consegue fazer isso em qualquer GPU.
 
