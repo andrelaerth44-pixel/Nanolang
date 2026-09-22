@@ -1251,6 +1251,56 @@ impl IrRuntime {
             });
         }
 
+        if name == "ok" {
+            if args.len() != 1 { return Err("Nano: ok() recebe 1 valor".into()); }
+            let mut object = HashMap::new();
+            object.insert("ok".into(), Value::Boolean(true));
+            object.insert("value".into(), args[0].clone());
+            return Ok(Value::Object(object));
+        }
+
+        if name == "err" {
+            if args.len() != 1 { return Err("Nano: err() recebe 1 mensagem".into()); }
+            let message = text_arg(&args[0], "mensagem")?;
+            let mut object = HashMap::new();
+            object.insert("ok".into(), Value::Boolean(false));
+            object.insert("error".into(), Value::Text(message));
+            return Ok(Value::Object(object));
+        }
+
+        if name == "is_ok" {
+            if args.len() != 1 { return Err("Nano: is_ok() recebe 1 Result".into()); }
+            return Ok(Value::Boolean(matches!(
+                &args[0],
+                Value::Object(object) if matches!(object.get("ok"), Some(Value::Boolean(true)))
+            )));
+        }
+
+        if name == "unwrap" {
+            if args.len() != 1 { return Err("Nano: unwrap() recebe 1 Result".into()); }
+            let object = match &args[0] {
+                Value::Object(object) => object,
+                _ => return Err("Nano: unwrap() requer Result".into()),
+            };
+            match object.get("ok") {
+                Some(Value::Boolean(true)) => object.get("value").cloned().ok_or_else(|| "Nano: Result ok sem value".into()),
+                Some(Value::Boolean(false)) => {
+                    let message = object.get("error").map(Value::show).unwrap_or_else(|| "erro Nano desconhecido".into());
+                    Err(format!("Nano: unwrap(): {message}"))
+                }
+                _ => Err("Nano: objeto não é um Result válido".into()),
+            }
+        }
+
+        if name == "error" {
+            if args.len() != 1 { return Err("Nano: error() recebe 1 Result".into()); }
+            let object = match &args[0] {
+                Value::Object(object) => object,
+                _ => return Err("Nano: error() requer Result".into()),
+            };
+            return Ok(object.get("error").map(Value::show).unwrap_or_default().into());
+        }
+
         if name == "assert" {
             if args.len() != 1 && args.len() != 2 {
                 return Err("Nano: assert() recebe condição e, opcionalmente, mensagem".into());
