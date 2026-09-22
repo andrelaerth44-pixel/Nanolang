@@ -38,3 +38,12 @@ function triple_double(value) {
 
 task2 = task_spawn("triple_double", [5])
 assert(task_join(task2) == 15, "task-function-dependency")
+
+two_arg = pow(2, 8)
+assert(two_arg == 256, "call-argument-order")
+
+text_value = replace("nano-lang", "-", "_")
+assert(text_value == "nano_lang", "replace-argument-order")
+
+tensor_value = tensor([1, 2, 3, 4], [2, 2])
+assert(shape(tensor_value) == [2, 2], "tensor-argument-order")
