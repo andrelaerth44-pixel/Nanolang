@@ -83,5 +83,12 @@ jobs:
           cargo run --quiet --bin nano -- lint examples/native.nano
           cargo run --quiet --bin nano -- lint selfhost/bootstrap.nano
 
+      - name: Package toolchain
+        run: |
+          rm -rf /tmp/nano-package
+          cargo run --quiet --bin nano -- package init /tmp/nano-package
+          cargo run --quiet --bin nano -- package lock /tmp/nano-package
+          cargo run --quiet --bin nano -- package verify /tmp/nano-package
+
       - name: Nano integration tests
         run: cargo run --quiet --bin nano -- test tests
