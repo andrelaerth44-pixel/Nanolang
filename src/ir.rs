@@ -867,6 +867,7 @@ impl IrRuntime {
             "std.http.get_structured" => "http_get_structured",
             "std.http.get_secure" => "https_get",
             "std.math.abs" => "abs",
+            "std.math.matmul_transposed" => "matmul_transposed",
             "std.math.sqrt" => "sqrt",
             "std.math.floor" => "floor",
             "std.math.ceil" => "ceil",
@@ -1807,6 +1808,36 @@ impl IrRuntime {
                 )),
                 _ => Err("Nano: shape() requer Tensor".into()),
             };
+        }
+
+        if name == "matmul_transposed" {
+            if args.len() != 4 {
+                return Err("Nano: matmul_transposed() recebe A, B, transposeA, transposeB".into());
+            }
+            let (left, right) = match (&args[0], &args[1]) {
+                (Value::Tensor(a), Value::Tensor(b)) => (a, b),
+                _ => return Err("Nano: matmul_transposed() requer Tensor, Tensor, Boolean, Boolean".into()),
+            };
+            let left_transpose = match args[2] { Value::Boolean(v) => v, _ => return Err("Nano: transposeA deve ser Boolean".into()) };
+            let right_transpose = match args[3] { Value::Boolean(v) => v, _ => return Err("Nano: transposeB deve ser Boolean".into()) };
+            let (lshape, rshape, requires_grad, dtype) = {
+                let l = left.borrow();
+                let r = right.borrow();
+                if l.device != self.backend.kind() || r.device != self.backend.kind() {
+                    return Err("Nano: matmul_transposed requer tensors no backend ativo".into());
+                }
+                (l.shape.clone(), r.shape.clone(), l.requires_grad || r.requires_grad, l.dtype)
+            };
+            let data = self.sync_tensor_host(left).and_then(|_| self.sync_tensor_host(right))?;
+            let _ = data;
+            let left_data = left.borrow().data_f32();
+            let right_data = right.borrow().data_f32();
+            let output = self.backend.matmul_transposed(&left_data, &lshape, &right_data, &rshape, left_transpose, right_transpose)
+                .map_err(|e| format!("Nano: backend {}: {e}", self.backend.kind().name()))?;
+            let (m, _k) = if left_transpose { (lshape[1], lshape[0]) } else { (lshape[0], lshape[1]) };
+            let (_k2, n) = if right_transpose { (rshape[1], rshape[0]) } else { (rshape[0], rshape[1]) };
+            let tensor = super::Tensor::derived_dtype_on(output, vec![m, n], requires_grad, self.backend.kind(), dtype, TensorOp::Matmul(left.clone(), right.clone()))?;
+            Ok(Value::Tensor(tensor))
         }
 
         if name == "matmul" {
