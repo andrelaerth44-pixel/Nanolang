@@ -42,7 +42,9 @@ pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
         return Err(format!("Nano: linker '{cc}' terminou com código {:?}", status.code()));
     }
 
-    let _ = fs::remove_file(&asm_path);
+    if std::env::var_os("NANO_KEEP_ASM").is_none() {
+        let _ = fs::remove_file(&asm_path);
+    }
     Ok(())
 }
 
