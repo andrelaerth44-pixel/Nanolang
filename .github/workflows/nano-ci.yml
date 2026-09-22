@@ -78,5 +78,10 @@ jobs:
       - name: UI syntax check
         run: cargo run --quiet --bin nano -- check examples/ui.nano
 
+      - name: Lint check
+        run: |
+          cargo run --quiet --bin nano -- lint examples/native.nano
+          cargo run --quiet --bin nano -- lint selfhost/bootstrap.nano
+
       - name: Nano integration tests
         run: cargo run --quiet --bin nano -- test tests
