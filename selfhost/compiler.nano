@@ -318,8 +318,8 @@ function emit_program(program) {
 
     counter = 0
 
-    for function in functions {
-        part = emit_function(function, counter)
+    for fn_item in functions {
+        part = emit_function(fn_item, counter)
         for line in part.lines {
             lines = append(lines, line)
         }
