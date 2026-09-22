@@ -1,7 +1,7 @@
 # Nano self-host semantic validator v0.1
 # Valida a forma estrutural da AST antes da emissão do IR.
 
-function fail(message) {
+function semantic_fail(message) {
     return {ok: false, error: message}
 }
 
@@ -15,7 +15,7 @@ function validate_expr(node) {
     }
 
     if node.kind == "ident" {
-        if node.name == "" { return fail("identificador vazio") }
+        if node.name == "" { return semantic_fail("identificador vazio") }
         return good()
     }
 
@@ -64,15 +64,15 @@ function validate_expr(node) {
     if node.kind == "field" {
         checked = validate_expr(node.target)
         if !checked.ok { return checked }
-        if node.name == "" { return fail("campo vazio") }
+        if node.name == "" { return semantic_fail("campo vazio") }
         return good()
     }
 
-    return fail("expressão desconhecida: " + node.kind)
+    return semantic_fail("expressão desconhecida: " + node.kind)
 }
 
 function validate_block(block) {
-    if block.kind != "block" { return fail("bloco inválido") }
+    if block.kind != "block" { return semantic_fail("bloco inválido") }
     for stmt in block.body {
         checked = validate_stmt(stmt)
         if !checked.ok { return checked }
@@ -96,7 +96,7 @@ function validate_stmt(stmt) {
     if stmt.kind == "assign_field" {
         checked = validate_expr(stmt.target)
         if !checked.ok { return checked }
-        if stmt.name == "" { return fail("campo de atribuição vazio") }
+        if stmt.name == "" { return semantic_fail("campo de atribuição vazio") }
         return validate_expr(stmt.value)
     }
 
@@ -109,7 +109,7 @@ function validate_stmt(stmt) {
     }
 
     if stmt.kind == "use" {
-        if stmt.path == "" { return fail("use sem caminho") }
+        if stmt.path == "" { return semantic_fail("use sem caminho") }
         return good()
     }
 
@@ -128,22 +128,22 @@ function validate_stmt(stmt) {
     }
 
     if stmt.kind == "for" {
-        if stmt.name == "" { return fail("for sem variável") }
+        if stmt.name == "" { return semantic_fail("for sem variável") }
         checked = validate_expr(stmt.iterable)
         if !checked.ok { return checked }
         return validate_block(stmt.body)
     }
 
     if stmt.kind == "function" {
-        if stmt.name == "" { return fail("função sem nome") }
+        if stmt.name == "" { return semantic_fail("função sem nome") }
         return validate_block(stmt.body)
     }
 
-    return fail("statement desconhecido: " + stmt.kind)
+    return semantic_fail("statement desconhecido: " + stmt.kind)
 }
 
 function validate_program(program) {
-    if program.kind != "program" { return fail("AST raiz inválida") }
+    if program.kind != "program" { return semantic_fail("AST raiz inválida") }
     for stmt in program.body {
         checked = validate_stmt(stmt)
         if !checked.ok { return checked }
