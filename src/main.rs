@@ -107,8 +107,11 @@ impl Lexer {
     }
 }
 
-#[derive(Debug, Clone)]
-enum Value { Number(f64), Text(String), Boolean(bool), List(Vec<Value>), Object(HashMap<String, Value>), Null }
+#[derive(Debug, Clone, PartialEq)]
+enum Value {
+    Number(f64), Text(String), Boolean(bool),
+    List(Vec<Value>), Object(HashMap<String, Value>), Null
+}
 
 impl Value {
     fn truthy(&self) -> bool {
@@ -134,6 +137,25 @@ impl Value {
                 format!("{{{}}}", items.join(", "))
             }
             Self::Null => "null".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Type {
+    Number, Text, Boolean, List, Object, Null, Any,
+}
+
+impl Type {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Number => "Number",
+            Self::Text => "Text",
+            Self::Boolean => "Boolean",
+            Self::List => "List",
+            Self::Object => "Object",
+            Self::Null => "Null",
+            Self::Any => "Any",
         }
     }
 }
@@ -177,7 +199,13 @@ impl Parser {
     }
     fn statement(&mut self) -> Result<Stmt, String> {
         match self.peek() {
-            Token::Use => { self.advance(); match self.advance() { Token::Text(path) => Ok(Stmt::Use(path)), x => Err(format!("Nano: caminho do módulo esperado, encontrado {:?}", x)) } }
+            Token::Use => {
+                self.advance();
+                match self.advance() {
+                    Token::Text(path) => Ok(Stmt::Use(path)),
+                    x => Err(format!("Nano: caminho do módulo esperado, encontrado {:?}", x)),
+                }
+            }
             Token::Function => self.function(),
             Token::Print => { self.advance(); Ok(Stmt::Print(self.expression()?)) }
             Token::If => self.if_stmt(),
@@ -185,9 +213,12 @@ impl Parser {
             Token::Ident(name) => {
                 let name = name.clone();
                 if matches!(self.tokens.get(self.pos + 1), Some(Token::Equal)) {
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     Ok(Stmt::Assign(name, self.expression()?))
-                } else { Ok(Stmt::Expr(self.expression()?)) }
+                } else {
+                    Ok(Stmt::Expr(self.expression()?))
+                }
             }
             _ => Ok(Stmt::Expr(self.expression()?)),
         }
@@ -217,7 +248,12 @@ impl Parser {
         self.advance();
         let cond = self.expression()?;
         let yes = self.block()?;
-        let no = if matches!(self.peek(), Token::Else) { self.advance(); self.block()? } else { Vec::new() };
+        let no = if matches!(self.peek(), Token::Else) {
+            self.advance();
+            self.block()?
+        } else {
+            Vec::new()
+        };
         Ok(Stmt::If(cond, yes, no))
     }
     fn block(&mut self) -> Result<Vec<Stmt>, String> {
@@ -357,6 +393,224 @@ impl Parser {
     }
 }
 
+struct Semantic {
+    vars: HashMap<String, Type>,
+    functions: HashMap<String, (usize, Type)>,
+}
+
+impl Semantic {
+    fn new() -> Self {
+        Self { vars: HashMap::new(), functions: HashMap::new() }
+    }
+
+    fn check(&mut self, program: &[Stmt]) -> Result<(), String> {
+        for stmt in program {
+            if let Stmt::Function(name, params, _) = stmt {
+                self.functions.entry(name.clone()).or_insert((params.len(), Type::Any));
+            }
+        }
+
+        for stmt in program {
+            if let Stmt::Function(name, params, body) = stmt {
+                self.check_function(name, params, body)?;
+            }
+        }
+
+        for stmt in program {
+            if !matches!(stmt, Stmt::Function(_, _, _)) {
+                self.check_stmt(stmt)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_function(&mut self, name: &str, params: &[String], body: &[Stmt]) -> Result<(), String> {
+        let saved = self.vars.clone();
+        for param in params {
+            self.vars.insert(param.clone(), Type::Any);
+        }
+
+        let mut return_type = Type::Null;
+        let mut saw_return = false;
+        for stmt in body {
+            self.check_stmt_with_return(stmt, &mut return_type, &mut saw_return)?;
+        }
+
+        let inferred = if saw_return { return_type } else { Type::Null };
+        if let Some((_, stored)) = self.functions.get_mut(name) {
+            *stored = (params.len(), inferred);
+        }
+
+        self.vars = saved;
+        Ok(())
+    }
+
+    fn check_stmt_with_return(
+        &mut self,
+        stmt: &Stmt,
+        return_type: &mut Type,
+        saw_return: &mut bool,
+    ) -> Result<(), String> {
+        match stmt {
+            Stmt::Return(expr) => {
+                let ty = self.expr_type(expr)?;
+                if !*saw_return {
+                    *return_type = ty;
+                    *saw_return = true;
+                } else {
+                    *return_type = Self::merge(*return_type, ty, "retorno de função")?;
+                }
+                Ok(())
+            }
+            Stmt::If(cond, yes, no) => {
+                self.expect_type(self.expr_type(cond)?, &[Type::Boolean, Type::Number, Type::Text, Type::List, Type::Object, Type::Null, Type::Any], "condição")?;
+                for s in yes { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                for s in no { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                Ok(())
+            }
+            _ => self.check_stmt(stmt),
+        }
+    }
+
+    fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        match stmt {
+            Stmt::Assign(name, expr) => {
+                let ty = self.expr_type(expr)?;
+                if let Some(previous) = self.vars.get(name).copied() {
+                    let merged = Self::merge(previous, ty, &format!("variável '{name}'"))?;
+                    self.vars.insert(name.clone(), merged);
+                } else {
+                    self.vars.insert(name.clone(), ty);
+                }
+                Ok(())
+            }
+            Stmt::Print(expr) | Stmt::Expr(expr) => { self.expr_type(expr)?; Ok(()) }
+            Stmt::If(cond, yes, no) => {
+                self.expr_type(cond)?;
+                for s in yes { self.check_stmt(s)?; }
+                for s in no { self.check_stmt(s)?; }
+                Ok(())
+            }
+            Stmt::Use(_) => Ok(()),
+            Stmt::Function(_, _, _) => Ok(()),
+            Stmt::Return(expr) => { self.expr_type(expr)?; Ok(()) }
+        }
+    }
+
+    fn expr_type(&mut self, expr: &Expr) -> Result<Type, String> {
+        match expr {
+            Expr::Value(v) => Ok(match v {
+                Value::Number(_) => Type::Number,
+                Value::Text(_) => Type::Text,
+                Value::Boolean(_) => Type::Boolean,
+                Value::List(_) => Type::List,
+                Value::Object(_) => Type::Object,
+                Value::Null => Type::Null,
+            }),
+            Expr::Var(name) => self.vars.get(name).copied().ok_or_else(|| format!("Nano: variável '{name}' não definida")),
+            Expr::List(items) => {
+                for item in items { self.expr_type(item)?; }
+                Ok(Type::List)
+            }
+            Expr::Object(fields) => {
+                for (_, value) in fields { self.expr_type(value)?; }
+                Ok(Type::Object)
+            }
+            Expr::Binary(a, op, b) => {
+                let left = self.expr_type(a)?;
+                let right = self.expr_type(b)?;
+                match op {
+                    Op::Eq | Op::Ne => Ok(Type::Boolean),
+                    Op::Add => {
+                        if left == Type::Any || right == Type::Any { return Ok(Type::Any); }
+                        match (left, right) {
+                            (Type::Number, Type::Number) => Ok(Type::Number),
+                            (Type::Text, _) | (_, Type::Text) => Ok(Type::Text),
+                            (Type::List, Type::List) => Ok(Type::List),
+                            _ => Err(format!("Nano: '+' não aceita {} + {}", left.name(), right.name())),
+                        }
+                    }
+                    Op::Sub | Op::Mul | Op::Div => {
+                        Self::numeric_result(left, right, "operação aritmética")
+                    }
+                    Op::Gt | Op::Ge | Op::Lt | Op::Le => {
+                        self.expect_numeric(left, right, "comparação")?;
+                        Ok(Type::Boolean)
+                    }
+                }
+            }
+            Expr::Field(target, name) => {
+                let target_type = self.expr_type(target)?;
+                match target_type {
+                    Type::Object | Type::Any => Ok(Type::Any),
+                    _ => Err(format!("Nano: '.' requer Object, recebido {}", target_type.name())),
+                }
+                .map_err(|e| if e.contains("Object") && !name.is_empty() { e } else { e })
+            }
+            Expr::Index(target, index) => {
+                let target_type = self.expr_type(target)?;
+                let index_type = self.expr_type(index)?;
+                match target_type {
+                    Type::Any => Ok(Type::Any),
+                    Type::List => {
+                        if index_type == Type::Number || index_type == Type::Any {
+                            Ok(Type::Any)
+                        } else {
+                            Err(format!("Nano: lista requer índice Number, recebido {}", index_type.name()))
+                        }
+                    }
+                    Type::Object => {
+                        if index_type == Type::Text || index_type == Type::Any {
+                            Ok(Type::Any)
+                        } else {
+                            Err(format!("Nano: Object requer chave Text, recebido {}", index_type.name()))
+                        }
+                    }
+                    _ => Err(format!("Nano: indexação requer List ou Object, recebido {}", target_type.name())),
+                }
+            }
+            Expr::Call(name, args) => {
+                for arg in args { self.expr_type(arg)?; }
+                if name == "len" {
+                    if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
+                    return Ok(Type::Number);
+                }
+                match self.functions.get(name) {
+                    Some((expected, return_type)) if *expected != args.len() => {
+                        Err(format!("Nano: '{name}' esperava {} argumentos", expected))
+                    }
+                    Some((_, return_type)) => Ok(*return_type),
+                    None => Ok(Type::Any),
+                }
+            }
+        }
+    }
+
+    fn merge(a: Type, b: Type, label: &str) -> Result<Type, String> {
+        if a == b { Ok(a) }
+        else if a == Type::Any || b == Type::Any { Ok(Type::Any) }
+        else { Err(format!("Nano: tipo incompatível em {label}: {} e {}", a.name(), b.name())) }
+    }
+
+    fn numeric_result(a: Type, b: Type, label: &str) -> Result<Type, String> {
+        if a == Type::Number && b == Type::Number { Ok(Type::Number) }
+        else if a == Type::Any || b == Type::Any { Ok(Type::Any) }
+        else { Err(format!("Nano: {label} requer Number, recebido {} e {}", a.name(), b.name())) }
+    }
+
+    fn expect_numeric(&self, a: Type, b: Type, label: &str) -> Result<(), String> {
+        if (a == Type::Number || a == Type::Any) && (b == Type::Number || b == Type::Any) {
+            Ok(())
+        } else {
+            Err(format!("Nano: {label} requer Number, recebido {} e {}", a.name(), b.name()))
+        }
+    }
+
+    fn expect_type(&self, _actual: Type, _allowed: &[Type], _label: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 struct Runtime {
     vars: HashMap<String, Value>,
     functions: HashMap<String, (Vec<String>, Vec<Stmt>)>,
@@ -407,23 +661,21 @@ impl Runtime {
                 let mut values = Vec::new();
                 for item in items { values.push(self.eval(item)?); }
                 Ok(Value::List(values))
-            },
+            }
             Expr::Object(fields) => {
                 let mut values = HashMap::new();
                 for (key, value) in fields { values.insert(key.clone(), self.eval(value)?); }
                 Ok(Value::Object(values))
-            },
+            }
             Expr::Binary(a, op, b) => {
                 let left = self.eval(a)?;
                 let right = self.eval(b)?;
                 self.binary(left, *op, right)
-            },
-            Expr::Field(target, name) => {
-                match self.eval(target)? {
-                    Value::Object(values) => values.get(name).cloned()
-                        .ok_or_else(|| format!("Nano: campo '{name}' não existe")),
-                    _ => Err("Nano: '.' requer um objeto".into()),
-                }
+            }
+            Expr::Field(target, name) => match self.eval(target)? {
+                Value::Object(values) => values.get(name).cloned()
+                    .ok_or_else(|| format!("Nano: campo '{name}' não existe")),
+                _ => Err("Nano: '.' requer um objeto".into()),
             },
             Expr::Index(target, index) => {
                 let value = self.eval(target)?;
@@ -437,7 +689,7 @@ impl Runtime {
                         .ok_or_else(|| format!("Nano: chave '{key}' não existe")),
                     _ => Err("Nano: indexação requer lista[número] ou objeto[texto]".into()),
                 }
-            },
+            }
             Expr::Call(name, args) => {
                 if name == "len" {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
@@ -448,7 +700,8 @@ impl Runtime {
                         _ => Err("Nano: len() requer texto, lista ou objeto".into()),
                     };
                 }
-                let (params, body) = self.functions.get(name).cloned().ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
+                let (params, body) = self.functions.get(name).cloned()
+                    .ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
                 if params.len() != args.len() { return Err(format!("Nano: '{name}' esperava {} argumentos", params.len())); }
                 let saved = self.vars.clone();
                 for (p, a) in params.iter().zip(args) {
@@ -478,8 +731,8 @@ impl Runtime {
             Op::Sub => num(a,b,|x,y| x-y),
             Op::Mul => num(a,b,|x,y| x*y),
             Op::Div => num(a,b,|x,y| x/y),
-            Op::Eq => Ok(Value::Boolean(a.show() == b.show())),
-            Op::Ne => Ok(Value::Boolean(a.show() != b.show())),
+            Op::Eq => Ok(Value::Boolean(a == b)),
+            Op::Ne => Ok(Value::Boolean(a != b)),
             Op::Gt => cmp(a,b,|x,y| x>y),
             Op::Ge => cmp(a,b,|x,y| x>=y),
             Op::Lt => cmp(a,b,|x,y| x<y),
@@ -508,7 +761,7 @@ fn main() {
         [_, command] if command == "run" => "main.nano".to_string(),
         [_, command, file] if command == "run" => file.clone(),
         _ => {
-            eprintln!("Nano 0.3 — uso: nano run [arquivo.nano]");
+            eprintln!("Nano 0.4 — uso: nano run [arquivo.nano]");
             process::exit(2);
         }
     };
@@ -524,6 +777,13 @@ fn main() {
         Ok(p) => p,
         Err(e) => { eprintln!("{e}"); process::exit(1); }
     };
+
+    let mut semantic = Semantic::new();
+    if let Err(e) = semantic.check(&program) {
+        eprintln!("{e}");
+        process::exit(1);
+    }
+
     if let Err(e) = Runtime::new().run(&program) {
         eprintln!("{e}");
         process::exit(1);
