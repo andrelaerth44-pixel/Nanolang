@@ -110,12 +110,13 @@ pub(crate) fn serve() -> Result<(), String> {
                         let frame_id = reference / 1000;
                         if let Some(active) = session.as_ref() {
                             for (name, value) in active.variables_for_frame(frame_id) {
-                            variables.push(json!({
-                                "name": name,
-                                "value": value.show(),
-                                "type": value_type(&value),
-                                "variablesReference": 0
-                            }));
+                                variables.push(json!({
+                                    "name": name,
+                                    "value": value.show(),
+                                    "type": value_type(&value),
+                                    "variablesReference": 0
+                                }));
+                            }
                         }
                     }
                 }
@@ -222,8 +223,7 @@ fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
         if reader.read_line(&mut line).map_err(|e| format!("Nano DAP: {e}"))? == 0 {
             return Ok(None);
         }
-        let trimmed = line.trim_end_matches(['','
-']);
+        let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() { break; }
         if let Some((key,value)) = trimmed.split_once(':') {
             if key.eq_ignore_ascii_case("Content-Length") {
