@@ -30,6 +30,10 @@ assert(process_result.stdout == "nano", "process-output-stdout")
 
 assert(std.math.pow(2, 8) == 256, "std-math-pow")
 assert(std.env.get("NANO_UNSET_TEST") == null, "std-env-get-missing")
+json_text = std.json.encode({name: "nano", values: [1, 2, true]})
+json_value = std.json.decode(json_text)
+assert(json_value.name == "nano", "json-object")
+assert(json_value.values[2] == true, "json-array")
 
 function square(value) {
     return value * value
