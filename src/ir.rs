@@ -1048,18 +1048,19 @@ fn backward(
 
 #[cfg(test)]
 mod ir_tests {
-    use super::*;
+    use super::{index_value, IrRuntime, Tensor, Value};
+    use crate::backend::BackendKind;
 
     #[test]
     fn tensor_index_reads_flattened_storage() {
-        let tensor = super::Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], false).unwrap();
-        let value = super::index_value(super::Value::Tensor(tensor), super::Value::Number(2.0)).unwrap();
-        assert_eq!(value, super::Value::Number(3.0));
+        let tensor = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2], false).unwrap();
+        let value = index_value(Value::Tensor(tensor), Value::Number(2.0)).unwrap();
+        assert_eq!(value, Value::Number(3.0));
     }
 
     #[test]
     fn runtime_starts_on_cpu() {
-        let runtime = super::IrRuntime::new();
-        assert_eq!(runtime.backend.kind(), super::backend::BackendKind::Cpu);
+        let runtime = IrRuntime::new();
+        assert_eq!(runtime.backend.kind(), BackendKind::Cpu);
     }
 }
