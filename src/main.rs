@@ -1148,7 +1148,7 @@ mod tests {
             "--backend=cpu".into(),
             "examples/tensor.nano".into(),
         ];
-        let (command, path, backend) = parse_cli(&args).unwrap();
+        let (command, path, backend, dtype) = parse_cli(&args).unwrap();
         assert_eq!(command, CliCommand::Check);
         assert_eq!(path, "examples/tensor.nano");
         assert_eq!(backend, Some(backend::BackendKind::Cpu));
