@@ -845,6 +845,87 @@ impl Semantic {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
                     return Ok(Type::Number);
                 }
+                if name == "to_text" {
+                    if args.len() != 1 { return Err("Nano: to_text() recebe 1 argumento".into()); }
+                    return Ok(Type::Text);
+                }
+                if name == "to_number" {
+                    if args.len() != 1 { return Err("Nano: to_number() recebe 1 argumento".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Text && ty != Type::Any {
+                        return Err(format!("Nano: to_number() requer Text, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Number);
+                }
+                if matches!(name, "upper" | "lower" | "trim") {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Text")); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Text && ty != Type::Any {
+                        return Err(format!("Nano: {name}() requer Text, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Text);
+                }
+                if matches!(name, "contains" | "starts_with" | "ends_with") {
+                    if args.len() != 2 { return Err(format!("Nano: {name}() recebe 2 Text")); }
+                    let a = self.expr_type(&args[0])?;
+                    let b = self.expr_type(&args[1])?;
+                    if (a != Type::Text && a != Type::Any) || (b != Type::Text && b != Type::Any) {
+                        return Err(format!("Nano: {name}() requer Text, Text"));
+                    }
+                    return Ok(Type::Boolean);
+                }
+                if name == "replace" {
+                    if args.len() != 3 { return Err("Nano: replace() recebe texto, antigo e novo".into()); }
+                    for arg in args {
+                        let ty = self.expr_type(arg)?;
+                        if ty != Type::Text && ty != Type::Any {
+                            return Err("Nano: replace() requer Text, Text, Text".into());
+                        }
+                    }
+                    return Ok(Type::Text);
+                }
+                if name == "substring" || name == "char_at" {
+                    let expected = if name == "char_at" { 2 } else { 3 };
+                    if args.len() != expected { return Err(format!("Nano: {name}() recebe {expected} argumentos")); }
+                    let text = self.expr_type(&args[0])?;
+                    if text != Type::Text && text != Type::Any {
+                        return Err(format!("Nano: {name}() requer Text como primeiro argumento"));
+                    }
+                    for arg in &args[1..] {
+                        let ty = self.expr_type(arg)?;
+                        if ty != Type::Number && ty != Type::Any {
+                            return Err(format!("Nano: {name}() requer índices Number"));
+                        }
+                    }
+                    return Ok(Type::Text);
+                }
+                if name == "split" {
+                    if args.len() != 2 { return Err("Nano: split() recebe texto e separador".into()); }
+                    for arg in args {
+                        let ty = self.expr_type(arg)?;
+                        if ty != Type::Text && ty != Type::Any {
+                            return Err("Nano: split() requer Text, Text".into());
+                        }
+                    }
+                    return Ok(Type::List);
+                }
+                if name == "join" {
+                    if args.len() != 2 { return Err("Nano: join() recebe lista e separador".into()); }
+                    let list = self.expr_type(&args[0])?;
+                    let sep = self.expr_type(&args[1])?;
+                    if (list != Type::List && list != Type::Any) || (sep != Type::Text && sep != Type::Any) {
+                        return Err("Nano: join() requer List, Text".into());
+                    }
+                    return Ok(Type::Text);
+                }
+                if name == "append" {
+                    if args.len() != 2 { return Err("Nano: append() recebe lista e valor".into()); }
+                    let list = self.expr_type(&args[0])?;
+                    if list != Type::List && list != Type::Any {
+                        return Err("Nano: append() requer List".into());
+                    }
+                    return Ok(Type::List);
+                }
                 if name == "backend" {
                     if !args.is_empty() { return Err("Nano: backend() não recebe argumentos".into()); }
                     return Ok(Type::Text);
