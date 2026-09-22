@@ -198,6 +198,29 @@ pub(crate) fn init(root: &Path, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn add(root: &Path, name: &str, dependency: &str) -> Result<(), String> {
+    validate_name(name)?;
+    if dependency.trim().is_empty() {
+        return Err("Nano package: dependência vazia".into());
+    }
+    let mut manifest = Manifest::load(root)?;
+    manifest.dependencies.insert(name.to_string(), dependency.to_string());
+    fs::write(root.join("Nano.toml"), manifest.render())
+        .map_err(|e| format!("Nano package: não foi possível atualizar Nano.toml: {e}"))?;
+    lock(root)
+}
+
+pub(crate) fn remove(root: &Path, name: &str) -> Result<(), String> {
+    validate_name(name)?;
+    let mut manifest = Manifest::load(root)?;
+    if manifest.dependencies.remove(name).is_none() {
+        return Err(format!("Nano package: dependência '{name}' não existe"));
+    }
+    fs::write(root.join("Nano.toml"), manifest.render())
+        .map_err(|e| format!("Nano package: não foi possível atualizar Nano.toml: {e}"))?;
+    lock(root)
+}
+
 pub(crate) fn lock(root: &Path) -> Result<(), String> {
     let manifest = Manifest::load(root)?;
     let lock = LockFile::from_manifest(&manifest, root)?;
@@ -256,5 +279,19 @@ mod tests {
         let manifest = Manifest::new("demo");
         let lock = LockFile::from_manifest(&manifest, std::path::Path::new(".")).unwrap();
         assert!(lock.render().contains("demo = \".\""));
+    }
+
+    #[test]
+    fn dependency_add_and_remove_are_round_trippable() {
+        let root = std::env::temp_dir().join(format!("nano-package-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        super::init(&root, "demo").unwrap();
+        super::add(&root, "local", ".").unwrap();
+        let loaded = Manifest::load(&root).unwrap();
+        assert_eq!(loaded.dependencies.get("local").map(String::as_str), Some("."));
+        super::remove(&root, "local").unwrap();
+        let loaded = Manifest::load(&root).unwrap();
+        assert!(!loaded.dependencies.contains_key("local"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
