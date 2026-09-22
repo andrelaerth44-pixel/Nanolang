@@ -50,7 +50,7 @@ function unary_code(op) {
     return "1"
 }
 
-function symbol(name) {
+function c_symbol(name) {
     result = replace(name, ".", "_")
     result = replace(result, "-", "_")
     return result
@@ -326,7 +326,7 @@ function emit_c_function(fn_item) {
     code = fn_item.code
     labels = label_targets(code)
     lines = [
-        "static NanoValue *nano_fn_" + symbol(fn_item.name) + "(NanoValue **args, int argc) {",
+        "static NanoValue *nano_fn_" + c_symbol(fn_item.name) + "(NanoValue **args, int argc) {",
         "    NanoEnv env = {0};",
         "    NanoValue *stack[1024];",
         "    int sp = 0;",
@@ -373,7 +373,7 @@ function emit_dispatch(functions) {
         "static NanoValue *nano_call_dynamic(const char *name, NanoValue **args, int argc) {"
     ]
     for fn_item in functions {
-        lines = append(lines, "    if (strcmp(name, \"" + escape_c(fn_item.name) + "\") == 0) return nano_fn_" + symbol(fn_item.name) + "(args, argc);")
+        lines = append(lines, "    if (strcmp(name, \"" + escape_c(fn_item.name) + "\") == 0) return nano_fn_" + c_symbol(fn_item.name) + "(args, argc);")
     }
     lines = append(lines, "    return nano_call_builtin(name, args, argc);")
     lines = append(lines, "}")
@@ -442,7 +442,7 @@ function emit_c(ir_text, runtime_text) {
     ]
 
     for fn_item in functions {
-        lines = append(lines, "static NanoValue *nano_fn_" + symbol(fn_item.name) + "(NanoValue **args, int argc);")
+        lines = append(lines, "static NanoValue *nano_fn_" + c_symbol(fn_item.name) + "(NanoValue **args, int argc);")
     }
     for line in lines {
         out = append(out, line)
