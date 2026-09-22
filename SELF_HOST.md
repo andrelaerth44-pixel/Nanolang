@@ -1,10 +1,10 @@
 # Nano Self-Hosting
 
 Stage 0: Rust bootstrap compiler.
-Stage 1: compiler/lexer.nano, parser.nano, ast.nano and ir.nano.
-Stage 2: Rust and Nano compilers emit normalized equivalent IR.
-Stage 3: bootstrap emits native compiler artifacts.
-Stage 4: Nano compiles its own compiler.
-Stage 5: formatter, LSP, package manager, linter and debugger become Nano-native tools.
+Stage 1: lexer, parser and textual IR compiler já funcionam em Nano, cobrindo funções, expressões, objetos, indexação, loops e controle básico.
+Stage 2: Rust e Nano passam a expor uma representação IR textual determinística para comparação.
+Stage 3: bootstrap passa a produzir artefatos de compilador nativo.
+Stage 4: Nano compila o próprio compilador.
+Stage 5: formatter, LSP, package manager, linter e debugger tornam-se ferramentas Nano-native.
 
-The self-hosted compiler becomes authoritative only after the conformance suite proves equivalent semantics.
+A regra de autoridade continua: o compilador self-hosted só substitui o bootstrap Rust quando a suíte de conformidade comprovar semântica equivalente.
