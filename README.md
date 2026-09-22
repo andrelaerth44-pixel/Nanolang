@@ -52,22 +52,29 @@ Bootstrap atual:
 cargo run -- run examples/main.nano
 ```
 
-Direção da CLI:
+Ou, dentro de um projeto:
 
 ```bash
 nano run
+```
+
+A direção da CLI também inclui:
+
+```bash
 nano build
 nano build --native
 ```
 
-Quando `run` for executado dentro de um projeto, a convenção será procurar automaticamente por `main.nano`.
+Quando `run` for executado dentro de um projeto sem arquivo explícito, a convenção será procurar automaticamente por `main.nano`.
 
-## Nano 0.3
+## Nano 0.4
 
-O núcleo inicial contém:
+O núcleo atual contém:
 
 - números, texto e booleanos;
 - variáveis;
+- inferência automática de tipos;
+- verificação semântica básica antes da execução;
 - expressões;
 - `print`;
 - `if` / `else`;
@@ -81,7 +88,27 @@ O núcleo inicial contém:
 - módulos com `use`;
 - runtime próprio.
 
-Depois entram módulos, coleções, eventos, aplicações, dados, paralelismo, IA, compressão e backends nativos.
+A regra é: capacidades novas não devem transformar Nano numa linguagem cheia de declarações obrigatórias.
+
+Depois entram IR mais completo, interface, eventos, aplicações, dados, paralelismo, IA, compressão e backends nativos.
+
+## Exemplo de tipos inferidos
+
+O programador escreve:
+
+```nano
+name = "André"
+age = 25
+active = true
+numbers = [10, 20, 30]
+
+print name
+print age
+print active
+print len(numbers)
+```
+
+Nano infere internamente `Text`, `Number`, `Boolean` e `List`. Nenhum tipo precisa ser escrito manualmente.
 
 ## Self-host
 
