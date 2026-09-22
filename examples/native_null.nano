@@ -1,0 +1,8 @@
+function no_result() {
+    print "side-effect"
+}
+
+no_result()
+print null
+print !null
+print ! ""
