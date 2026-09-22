@@ -1517,6 +1517,8 @@ enum CliCommand {
     Debug,
     New,
     PackageInit,
+    PackageAdd,
+    PackageRemove,
     PackageLock,
     PackageVerify,
     BuildNative,
@@ -1538,9 +1540,11 @@ fn parse_cli(
         Some("build") => CliCommand::BuildNative,
         Some("package") => match args.get(2).map(String::as_str) {
             Some("init") => CliCommand::PackageInit,
+            Some("add") => CliCommand::PackageAdd,
+            Some("remove") => CliCommand::PackageRemove,
             Some("lock") => CliCommand::PackageLock,
             Some("verify") => CliCommand::PackageVerify,
-            _ => return Err("uso: nano package init|lock|verify [diretório]".into()),
+            _ => return Err("uso: nano package init|add|remove|lock|verify [argumentos]".into()),
         },
         _ => return Err("uso: nano run|check|lint|test|fmt|lsp|repl|debug|new|package init|lock|verify|build [opções] [arquivo]".into()),
     };
@@ -1550,9 +1554,10 @@ fn parse_cli(
     let mut selected_dtype = None;
     let mut output = None;
     let mut native_requested = false;
+    let package_mutation = matches!(command, CliCommand::PackageAdd | CliCommand::PackageRemove);
     let mut index = if matches!(
         command,
-        CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify
+        CliCommand::PackageInit | CliCommand::PackageAdd | CliCommand::PackageRemove | CliCommand::PackageLock | CliCommand::PackageVerify
     ) { 3 } else { 2 };
 
     while index < args.len() {
@@ -1596,7 +1601,13 @@ fn parse_cli(
                 return Err(format!("Nano: opção desconhecida '{value}'"));
             }
             value => {
-                if path.replace(value.to_string()).is_some() {
+                if package_mutation {
+                    if output.is_none() {
+                        output = Some(value.to_string());
+                    } else if path.replace(value.to_string()).is_some() {
+                        return Err("Nano package: argumentos extras demais".into());
+                    }
+                } else if path.replace(value.to_string()).is_some() {
                     return Err("Nano: apenas um arquivo .nano pode ser informado".into());
                 }
             }
@@ -1612,7 +1623,7 @@ fn parse_cli(
     if matches!(command, CliCommand::Test) && native_requested {
         return Err("Nano: --native não é válido com 'test'".into());
     }
-    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New | CliCommand::Fmt | CliCommand::Lsp | CliCommand::Repl | CliCommand::Debug)
+    if matches!(command, CliCommand::PackageInit | CliCommand::PackageAdd | CliCommand::PackageRemove | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New | CliCommand::Fmt | CliCommand::Lsp | CliCommand::Repl | CliCommand::Debug)
         && (native_requested || selected_backend.is_some() || selected_dtype.is_some() || output.is_some()) {
         return Err("Nano: opções não são válidas para este comando".into());
     }
@@ -1630,7 +1641,7 @@ fn parse_cli(
         command,
         path.unwrap_or_else(|| {
             match command {
-                CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify => ".".into(),
+                CliCommand::PackageInit | CliCommand::PackageAdd | CliCommand::PackageRemove | CliCommand::PackageLock | CliCommand::PackageVerify => ".".into(),
                 CliCommand::New => "nano-project".into(),
                 CliCommand::Repl | CliCommand::Lsp => String::new(),
                 _ => "main.nano".into(),
