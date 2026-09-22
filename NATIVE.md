@@ -1,18 +1,23 @@
-# Nano Native Platform
+# Nano Native
 
-Nano is a native language. It must not depend on transpiling Nano into Kotlin, Java or Python.
+Nano não transpila para Kotlin, Java ou Python.
 
-## CPU native compiler
-Nano IR is lowered through a dedicated native code-generation layer to the target ABI and machine code. The Rust bootstrap remains the semantic reference until self-hosting is proven.
+## CPU
+
+nano build --native compila:
+
+Nao source -> lexer/parser/semantic -> Nano IR -> optimizer -> x86-64 assembly -> linker do sistema -> executável nativo.
+
+O backend atual gera código x86-64 para Linux e cobre o subconjunto numérico necessário para aritmética, comparação, controle de fluxo simples, chamadas de funções numéricas, FMA e impressão.
+
+O backend rejeita instruções fora do subconjunto com erro explícito. Isso evita produzir um executável que tenha semântica diferente do programa Nano.
 
 ## GPU
-The current runtime provides a real wgpu backend and resident tensor execution.
+
+O backend GPU usa wgpu e possui execução residente para operações de tensor e caminhos de autograd/otimizador.
 
 ## NPU
-NPU support is a real backend contract: device discovery, buffer allocation, kernel submission and synchronization. Unsupported targets report a capability error instead of silently pretending to be an NPU.
 
-## ABI
-Native modules use an explicit Nano ABI for values, tensors, dtypes, ownership and errors.
+O backend NPU usa um provider externo com ABI v1. A interface está em NPU.md.
 
-## Conformance
-Every backend is checked against the CPU semantic reference.
+O Nano não apresenta NPU como disponível quando não há provider configurado.
