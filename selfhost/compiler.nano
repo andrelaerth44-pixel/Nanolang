@@ -1,6 +1,31 @@
-# Nano self-hosted compiler v0.1
+# Nano self-hosted compiler v0.2
 # AST -> Nano IR textual.
-# Labels são simbólicos e podem ser resolvidos por uma etapa posterior.
+# O formato emitido é determinístico e mantém funções separadas do _main.
+
+function escape_text(value) {
+    value = replace(value, "\\", "\\\\")
+    value = replace(value, "\"", "\\\"")
+    value = replace(value, "
+", "\\n")
+    value = replace(value, "", "\\r")
+    value = replace(value, "	", "\\t")
+    return value
+}
+
+function qualified_name(node) {
+    if node.kind == "ident" {
+        return node.name
+    }
+
+    if node.kind == "field" {
+        base = qualified_name(node.target)
+        if base != "" {
+            return base + "." + node.name
+        }
+    }
+
+    return ""
+}
 
 function emit_expr(node) {
     lines = []
@@ -10,11 +35,15 @@ function emit_expr(node) {
     }
 
     if node.kind == "string" {
-        return append(lines, "const \"" + node.value + "\"")
+        return append(lines, "const \"" + escape_text(node.value) + "\"")
     }
 
     if node.kind == "boolean" {
         return append(lines, "const " + to_text(node.value))
+    }
+
+    if node.kind == "null" {
+        return append(lines, "const null")
     }
 
     if node.kind == "ident" {
@@ -36,14 +65,28 @@ function emit_expr(node) {
     }
 
     if node.kind == "call" {
-        target = node.target.name
+        name = qualified_name(node.target)
+        if name != "" {
+            for arg in node.args {
+                part = emit_expr(arg)
+                for line in part {
+                    lines = append(lines, line)
+                }
+            }
+            return append(lines, "call " + name + " " + to_text(len(node.args)))
+        }
+
+        target = emit_expr(node.target)
+        for line in target {
+            lines = append(lines, line)
+        }
         for arg in node.args {
             part = emit_expr(arg)
             for line in part {
                 lines = append(lines, line)
             }
         }
-        return append(lines, "call " + target + " " + to_text(len(node.args)))
+        return append(lines, "call_value " + to_text(len(node.args)))
     }
 
     if node.kind == "list" {
@@ -54,6 +97,37 @@ function emit_expr(node) {
             }
         }
         return append(lines, "make_list " + to_text(len(node.items)))
+    }
+
+    if node.kind == "object" {
+        keys = []
+        for field in node.fields {
+            keys = append(keys, field.key)
+            part = emit_expr(field.value)
+            for line in part {
+                lines = append(lines, line)
+            }
+        }
+
+        key_text = join(keys, ",")
+        if key_text == "" {
+            return append(lines, "make_object")
+        }
+        return append(lines, "make_object " + key_text)
+    }
+
+    if node.kind == "index" {
+        lines = emit_expr(node.target)
+        part = emit_expr(node.index)
+        for line in part {
+            lines = append(lines, line)
+        }
+        return append(lines, "index")
+    }
+
+    if node.kind == "field" {
+        lines = emit_expr(node.target)
+        return append(lines, "field " + node.name)
     }
 
     return append(lines, "unsupported " + node.kind)
@@ -74,12 +148,49 @@ function emit_block(body, counter) {
     return {lines: lines, next: next_counter}
 }
 
+function emit_function(stmt, counter) {
+    lines = []
+
+    signature = "function " + stmt.name + "(" + join(stmt.params, ", ") + ")"
+    lines = append(lines, signature)
+
+    body = emit_block(stmt.body.body, counter)
+    for line in body.lines {
+        lines = append(lines, line)
+    }
+
+    lines = append(lines, "end_function")
+    return {lines: lines, next: body.next}
+}
+
 function emit_stmt(stmt, counter) {
     lines = []
 
     if stmt.kind == "assign" {
         lines = emit_expr(stmt.value)
         return {lines: append(lines, "store " + stmt.name), next: counter}
+    }
+
+    if stmt.kind == "assign_index" {
+        lines = emit_expr(stmt.target)
+        index = emit_expr(stmt.index)
+        value = emit_expr(stmt.value)
+        for line in index {
+            lines = append(lines, line)
+        }
+        for line in value {
+            lines = append(lines, line)
+        }
+        return {lines: append(lines, "set_index"), next: counter}
+    }
+
+    if stmt.kind == "assign_field" {
+        lines = emit_expr(stmt.target)
+        value = emit_expr(stmt.value)
+        for line in value {
+            lines = append(lines, line)
+        }
+        return {lines: append(lines, "set_field " + stmt.name), next: counter}
     }
 
     if stmt.kind == "expr" {
@@ -166,12 +277,65 @@ function emit_stmt(stmt, counter) {
         return {lines: lines, next: counter}
     }
 
+    if stmt.kind == "for" {
+        start_id = counter
+        counter = counter + 1
+        end_id = counter
+        counter = counter + 1
+        start_label = "L" + to_text(start_id)
+        end_label = "L" + to_text(end_id)
+
+        lines = emit_expr(stmt.iterable)
+        lines = append(lines, "iter_init")
+        lines = append(lines, "label " + start_label)
+        lines = append(lines, "iter_next " + stmt.name + " " + end_label)
+
+        body = emit_block(stmt.body.body, counter)
+        for line in body.lines {
+            lines = append(lines, line)
+        }
+        counter = body.next
+
+        lines = append(lines, "jump " + start_label)
+        lines = append(lines, "label " + end_label)
+        return {lines: lines, next: counter}
+    }
+
     return {lines: append(lines, "unsupported_stmt " + stmt.kind), next: counter}
 }
 
 function emit_program(program) {
-    result = emit_block(program.body, 0)
-    return result.lines
+    lines = []
+    functions = []
+    main_body = []
+
+    for stmt in program.body {
+        if stmt.kind == "function" {
+            functions = append(functions, stmt)
+        } else {
+            main_body = append(main_body, stmt)
+        }
+    }
+
+    counter = 0
+
+    for function in functions {
+        part = emit_function(function, counter)
+        for line in part.lines {
+            lines = append(lines, line)
+        }
+        counter = part.next
+        lines = append(lines, "")
+    }
+
+    lines = append(lines, "function _main()")
+    main = emit_block(main_body, counter)
+    for line in main.lines {
+        lines = append(lines, line)
+    }
+    lines = append(lines, "end_function")
+
+    return lines
 }
 
 function main() {
