@@ -188,6 +188,7 @@ struct Tensor {
     requires_grad: bool,
     device: backend::BackendKind,
     op: TensorOp,
+    host_valid: bool,
 }
 
 impl Tensor {
@@ -218,6 +219,7 @@ impl Tensor {
             requires_grad,
             device,
             op: TensorOp::Leaf,
+            host_valid: true,
         })))
     }
 
@@ -250,7 +252,8 @@ impl Tensor {
         Ok(Rc::new(RefCell::new(Self{id,storage:TensorStorage::from_f32(dtype,data),shape,dtype,requires_grad,device,op})))
     }
     fn data_f32(&self) -> Vec<f32> { self.storage.to_f32() }
-    fn set_data_f32(&mut self, data: Vec<f32>) { self.storage = TensorStorage::from_f32(self.dtype, data); }
+    fn set_data_f32(&mut self, data: Vec<f32>) { self.storage = TensorStorage::from_f32(self.dtype, data); self.host_valid = true; }
+    fn mark_host_stale(&mut self) { self.host_valid = false; }
     fn data_len(&self) -> usize { self.storage.len() }
     fn memory_bytes(&self) -> usize { self.storage.bytes() }
 
