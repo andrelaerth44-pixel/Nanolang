@@ -720,8 +720,9 @@ impl IrRuntime {
                 IrInst::Const(value) => stack.push(value.clone()),
                 IrInst::Load(name) => {
                     let value = self.vars.get(name).cloned()
-                        .or_else(|| is_builtin_name(name).then(|| Value::Function(name.clone()))
-                        .or_else(|| is_tensor_builtin_name(name).then(|| Value::Function(name.clone()))))
+                        .or_else(|| self.functions.contains_key(name).then(|| Value::Function(name.clone())))
+                        .or_else(|| is_builtin_name(name).then(|| Value::Function(name.clone())))
+                        .or_else(|| is_tensor_builtin_name(name).then(|| Value::Function(name.clone())))
                         .ok_or_else(|| format!("Nano: variável '{name}' não definida"))?;
                     stack.push(value);
                 }
