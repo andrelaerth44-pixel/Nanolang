@@ -1,4 +1,4 @@
-# Nano 0.2 — Especificação inicial
+# Nano 0.3 — Especificação inicial
 
 ## 1. Arquivos
 
@@ -138,6 +138,34 @@ model.nano    -> lógica/IA
 
 A sintaxe específica de interface será definida quando o núcleo da linguagem estiver estável.
 
+## 5. Módulos
+
+Um arquivo Nano pode importar outro arquivo com uma única palavra:
+
+```nano
+use "math.nano"
+```
+
+O módulo é executado no mesmo runtime Nano, permitindo definir funções e dados reutilizáveis.
+
+Exemplo:
+
+```nano
+# math.nano
+function double(x) {
+    return x * 2
+}
+```
+
+```nano
+# main.nano
+use "math.nano"
+
+print double(21)
+```
+
+A forma inicial é deliberadamente simples. Sistema de módulos com nomes, pacotes e namespaces será adicionado depois sem quebrar esta sintaxe básica.
+
 ## 5. Tipos
 
 Nano 0.1 começa com:
@@ -149,7 +177,7 @@ Nano 0.1 começa com:
 
 A linguagem favorece inferência automática.
 
-## 6. Execução
+## 7. Execução
 
 Nano 0.1 possui um runtime próprio.
 
@@ -173,7 +201,7 @@ Nano IR
     └── Native NPU
 ```
 
-## 7. Self-host
+## 8. Self-host
 
 O bootstrap inicial pode ser escrito em Rust apenas para dar nascimento à ferramentachain.
 
@@ -191,7 +219,7 @@ Nano compila Nano
 
 Quando o compilador Nano conseguir compilar o seu próprio código-fonte usando uma versão anterior funcional do compilador, teremos atingido o núcleo do self-host.
 
-## 8. Regra de simplicidade
+## 9. Regra de simplicidade
 
 A sintaxe deve continuar pequena mesmo quando a plataforma ganhar capacidades avançadas.
 
