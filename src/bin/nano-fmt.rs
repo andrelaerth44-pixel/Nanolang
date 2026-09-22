@@ -33,6 +33,142 @@ fn scan_braces(line: &str) -> (usize, usize) {
     (opens, closes)
 }
 
+
+fn normalize_inline(line: &str) -> String {
+    let mut tokens = Vec::<String>::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0usize;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        if c == '#' {
+            let comment: String = chars[i..].iter().collect();
+            if !tokens.is_empty() {
+                return format!("{} {}", join_tokens(&tokens), comment.trim());
+            }
+            return comment.trim().to_string();
+        }
+
+        if c == '"' {
+            let start = i;
+            i += 1;
+            let mut escape = false;
+            while i < chars.len() {
+                let ch = chars[i];
+                i += 1;
+                if escape {
+                    escape = false;
+                } else if ch == '\\' {
+                    escape = true;
+                } else if ch == '"' {
+                    break;
+                }
+            }
+            tokens.push(chars[start..i].iter().collect());
+            continue;
+        }
+
+        if c.is_ascii_alphanumeric() || c == '_' {
+            let start = i;
+            i += 1;
+            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            tokens.push(chars[start..i].iter().collect());
+            continue;
+        }
+
+        if i + 1 < chars.len() {
+            let two = [c, chars[i + 1]];
+            if matches!(
+                two,
+                ['=', '='] | ['!', '='] | ['>', '='] | ['<', '='] | ['&', '&'] | ['|', '|']
+            ) {
+                tokens.push(two.iter().collect());
+                i += 2;
+                continue;
+            }
+        }
+
+        tokens.push(c.to_string());
+        i += 1;
+    }
+
+    join_tokens(&tokens)
+}
+
+fn token_is_value(token: &str) -> bool {
+    matches!(token.as_bytes().first(),
+        Some(b'0'..=b'9') | Some(b'_')
+    ) || token.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        || token.starts_with('"')
+        || matches!(token, ")" | "]" | "}")
+}
+
+fn is_operator(token: &str) -> bool {
+    matches!(token, "=" | "==" | "!=" | ">" | ">=" | "<" | "<=" | "&&" | "||" | "+" | "-" | "*" | "/" | "%")
+}
+
+fn join_tokens(tokens: &[String]) -> String {
+    let mut out = String::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        let prev = tokens.get(index.wrapping_sub(1)).map(String::as_str);
+        let next = tokens.get(index + 1).map(String::as_str);
+
+        let mut need_space = false;
+
+        if let Some(prev) = prev {
+            if token == "," {
+                need_space = false;
+            } else if prev == "," || prev == ":" {
+                need_space = true;
+            } else if token == ":" {
+                need_space = false;
+            } else if token == "." || prev == "." {
+                need_space = false;
+            } else if token == ")" || token == "]" || token == "}" {
+                need_space = false;
+            } else if prev == "(" || prev == "[" {
+                need_space = false;
+            } else if token == "(" {
+                need_space = false;
+            } else if is_operator(token) {
+                let unary = matches!(token, "+" | "-")
+                    && !token_is_value(prev)
+                    && prev != ")" && prev != "]" && prev != "}";
+                need_space = !unary;
+            } else if is_operator(prev) {
+                let unary_prev = matches!(prev, "+" | "-")
+                    && !token_is_value(tokens.get(index.saturating_sub(2)).map(String::as_str).unwrap_or(""));
+                need_space = !unary_prev;
+            } else {
+                need_space = token_is_value(prev) && (token_is_value(token) || token == "(");
+                if token == "{" && prev != "=" {
+                    need_space = true;
+                }
+            }
+        }
+
+        if need_space && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out.push_str(token);
+
+        if token == "," || token == ":" {
+            out.push(' ');
+        }
+        let _ = next;
+    }
+
+    out.trim().to_string()
+}
+
 fn format_source(src: &str) -> String {
     let mut out = String::new();
     let mut indent = 0usize;
@@ -58,7 +194,7 @@ fn format_source(src: &str) -> String {
         for _ in 0..indent {
             out.push_str("    ");
         }
-        out.push_str(line);
+        out.push_str(&normalize_inline(line));
         out.push('\n');
 
         let (opens, closes) = scan_braces(line);
@@ -95,6 +231,26 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::format_source;
+
+    #[test]
+    fn normalizes_inline_spacing() {
+        assert_eq!(
+            normalize_inline("x=1+2*3"),
+            "x = 1 + 2 * 3"
+        );
+        assert_eq!(
+            normalize_inline("if x>=10&&x<20 {"),
+            "if x >= 10 && x < 20 {"
+        );
+        assert_eq!(
+            normalize_inline("f(a,b,{x:1,y:2})"),
+            "f(a, b, {x: 1, y: 2})"
+        );
+        assert_eq!(
+            normalize_inline("x=-4"),
+            "x = -4"
+        );
+    }
 
     #[test]
     fn formats_blocks() {
