@@ -1,3 +1,6 @@
+use "lexer.nano"
+use "parser.nano"
+
 # Nano self-hosted compiler v0.2
 # AST -> Nano IR textual.
 # O formato emitido é determinístico e mantém funções separadas do _main.
