@@ -65,6 +65,102 @@ enum TaskValue {
     Null,
 }
 
+#[derive(Debug, Clone)]
+enum TaskInst {
+    Const(TaskValue),
+    Load(String),
+    Store(String),
+    Binary(Op),
+    Unary(crate::UnaryOp),
+    FusedMulAdd,
+    MakeList(usize),
+    MakeObject(Vec<String>),
+    Index,
+    Field(String),
+    Call(String, usize),
+    Print,
+    Pop,
+    JumpIfFalse(usize),
+    Jump(usize),
+    IterInit,
+    IterNext(String, usize),
+    Return,
+    Use(String),
+}
+
+impl TaskInst {
+    fn from_ir(inst: &IrInst) -> Result<Self, String> {
+        Ok(match inst {
+            IrInst::Const(value) => Self::Const(TaskValue::from_value(value.clone())?),
+            IrInst::Load(name) => Self::Load(name.clone()),
+            IrInst::Store(name) => Self::Store(name.clone()),
+            IrInst::Binary(op) => Self::Binary(*op),
+            IrInst::Unary(op) => Self::Unary(*op),
+            IrInst::FusedMulAdd => Self::FusedMulAdd,
+            IrInst::MakeList(count) => Self::MakeList(*count),
+            IrInst::MakeObject(keys) => Self::MakeObject(keys.clone()),
+            IrInst::Index => Self::Index,
+            IrInst::Field(name) => Self::Field(name.clone()),
+            IrInst::Call(name, count) => Self::Call(name.clone(), *count),
+            IrInst::Print => Self::Print,
+            IrInst::Pop => Self::Pop,
+            IrInst::JumpIfFalse(target) => Self::JumpIfFalse(*target),
+            IrInst::Jump(target) => Self::Jump(*target),
+            IrInst::IterInit => Self::IterInit,
+            IrInst::IterNext(name, target) => Self::IterNext(name.clone(), *target),
+            IrInst::Return => Self::Return,
+            IrInst::Use(path) => Self::Use(path.clone()),
+        })
+    }
+
+    fn into_ir(self) -> IrInst {
+        match self {
+            Self::Const(value) => IrInst::Const(value.into_value()),
+            Self::Load(name) => IrInst::Load(name),
+            Self::Store(name) => IrInst::Store(name),
+            Self::Binary(op) => IrInst::Binary(op),
+            Self::Unary(op) => IrInst::Unary(op),
+            Self::FusedMulAdd => IrInst::FusedMulAdd,
+            Self::MakeList(count) => IrInst::MakeList(count),
+            Self::MakeObject(keys) => IrInst::MakeObject(keys),
+            Self::Index => IrInst::Index,
+            Self::Field(name) => IrInst::Field(name),
+            Self::Call(name, count) => IrInst::Call(name, count),
+            Self::Print => IrInst::Print,
+            Self::Pop => IrInst::Pop,
+            Self::JumpIfFalse(target) => IrInst::JumpIfFalse(target),
+            Self::Jump(target) => IrInst::Jump(target),
+            Self::IterInit => IrInst::IterInit,
+            Self::IterNext(name, target) => IrInst::IterNext(name, target),
+            Self::Return => IrInst::Return,
+            Self::Use(path) => IrInst::Use(path),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TaskFunction {
+    params: Vec<String>,
+    code: Vec<TaskInst>,
+}
+
+impl TaskFunction {
+    fn from_ir(function: &IrFunction) -> Result<Self, String> {
+        let mut code = Vec::with_capacity(function.code.len());
+        for inst in &function.code {
+            code.push(TaskInst::from_ir(inst)?);
+        }
+        Ok(Self { params: function.params.clone(), code })
+    }
+
+    fn into_ir(self) -> IrFunction {
+        IrFunction {
+            params: self.params,
+            code: self.code.into_iter().map(TaskInst::into_ir).collect(),
+        }
+    }
+}
+
 impl TaskValue {
     fn from_value(value: Value) -> Result<Self, String> {
         match value {
@@ -757,8 +853,8 @@ impl IrRuntime {
             if !argv.iter().all(is_sendable) {
                 return Err("Nano: task_spawn() não aceita Tensor ou valores não thread-safe".into());
             }
+
             let function = self.functions.get(&function_name)
-                .cloned()
                 .ok_or_else(|| format!("Nano: função '{function_name}' não definida"))?;
             if function.params.len() != argv.len() {
                 return Err(format!(
@@ -766,16 +862,30 @@ impl IrRuntime {
                     function.params.len()
                 ));
             }
-            let functions = self.functions.clone();
+
+            let mut task_functions = HashMap::new();
+            for (name, function) in &self.functions {
+                task_functions.insert(name.clone(), TaskFunction::from_ir(function)?);
+            }
+            let function_name_for_thread = function_name.clone();
             let backend_kind = self.backend.kind();
             let dtype = self.dtype;
+            let task_args = argv.into_iter()
+                .map(TaskValue::from_value)
+                .collect::<Result<Vec<_>, _>>()?;
+
             let handle = self.next_handle;
             self.next_handle += 1;
             let join = thread::spawn(move || {
                 let mut runtime = IrRuntime::with_backend_and_dtype(backend_kind, dtype)?;
-                runtime.functions = functions;
-                for (param, value) in function.params.iter().zip(argv) {
-                    runtime.vars.insert(param.clone(), value);
+                for (name, function) in task_functions {
+                    runtime.functions.insert(name, function.into_ir());
+                }
+                let function = runtime.functions.get(&function_name_for_thread)
+                    .cloned()
+                    .ok_or_else(|| format!("Nano: tarefa não encontrou função '{function_name_for_thread}'"))?;
+                for (param, value) in function.params.iter().zip(task_args) {
+                    runtime.vars.insert(param.clone(), value.into_value());
                 }
                 runtime.execute_code(&function.code)
                     .and_then(|value| TaskValue::from_value(value.unwrap_or(Value::Null)))
