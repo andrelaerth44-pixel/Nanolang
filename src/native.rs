@@ -71,6 +71,7 @@ impl NativeModule {
     ) -> Result<(), String> {
         let symbol = format!("nano_fn_{}", sanitize(name));
         let mut locals = HashMap::<String, usize>::new();
+
         for (index, param) in params.iter().enumerate() {
             if index >= 8 {
                 return Err(format!("Nano native: função '{name}' tem mais de 8 parâmetros"));
@@ -78,95 +79,15 @@ impl NativeModule {
             locals.insert(param.clone(), index);
         }
 
-        let mut stack: Vec<Kind> = Vec::new();
-        let mut max_stack = 0usize;
         for inst in code {
-            match inst {
-                IrInst::Const(Value::Number(_)) => stack.push(Kind::Number),
-                IrInst::Const(Value::Boolean(_)) => stack.push(Kind::Number),
-                IrInst::Const(Value::Text(_)) => stack.push(Kind::Text),
-                IrInst::Const(_) => {
-                    return Err(format!("Nano native: constante não suportada em '{name}'"));
-                },
-                IrInst::Load(var) => {
-                    let _ = locals.get(var)
-                        .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
-                    stack.push(Kind::Number);
-                }
-                IrInst::Store(var) => {
-                    let kind = stack.pop().ok_or_else(|| format!("Nano native: Store inválido em '{name}'"))?;
-                    if kind != Kind::Number {
-                        return Err(format!("Nano native: variável '{var}' precisa ser Number"));
-                    }
-                    let slot = locals.len();
-                    locals.entry(var.clone()).or_insert(slot);
-                }
-                IrInst::Binary(op) => {
-                    let b = stack.pop().ok_or_else(|| format!("Nano native: stack insuficiente em '{name}'"))?;
-                    let a = stack.pop().ok_or_else(|| format!("Nano native: stack insuficiente em '{name}'"))?;
-                    if a != Kind::Number || b != Kind::Number {
-                        return Err(format!("Nano native: operação {:?} exige Numbers", op));
-                    }
-                    stack.push(Kind::Number);
-                }
-                IrInst::Unary(op) => {
-                    let value = stack.pop().ok_or_else(|| format!("Nano native: stack insuficiente em '{name}'"))?;
-                    if value != Kind::Number {
-                        return Err(format!("Nano native: operador {:?} exige Number", op));
-                    }
-                    stack.push(Kind::Number);
-                }
-                IrInst::FusedMulAdd => {
-                    for _ in 0..3 {
-                        if stack.pop().is_none() {
-                            return Err(format!("Nano native: FMA inválido em '{name}'"));
-                        }
-                    }
-                    stack.push(Kind::Number);
-                }
-                IrInst::Call(callee, count) => {
-                    if *count > 8 {
-                        return Err(format!("Nano native: chamada '{callee}' tem mais de 8 argumentos"));
-                    }
-                    for _ in 0..*count {
-                        if stack.pop() != Some(Kind::Number) {
-                            return Err(format!("Nano native: chamada '{callee}' requer argumentos Number"));
-                        }
-                    }
-                    stack.push(Kind::Number);
-                }
-                IrInst::Print => {
-                    let _ = stack.pop().ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
-                }
-                IrInst::Pop => {
-                    let _ = stack.pop().ok_or_else(|| format!("Nano native: pop inválido em '{name}'"))?;
-                }
-                IrInst::JumpIfFalse(_) => {
-                    if stack.pop() != Some(Kind::Number) {
-                        return Err(format!("Nano native: condição deve ser Number em '{name}'"));
-                    }
-                }
-                IrInst::Jump(_) => {}
-                IrInst::Return => {
-                    if stack.pop() != Some(Kind::Number) {
-                        return Err(format!("Nano native: retorno de '{name}' deve ser Number"));
-                    }
-                }
-                IrInst::MakeList(_)
-                | IrInst::MakeObject(_)
-                | IrInst::Index
-                | IrInst::Field(_)
-                | IrInst::IterInit
-                | IrInst::IterNext(_, _)
-                | IrInst::Use(_) => {
-                    return Err(format!("Nano native: instrução não suportada em '{name}': {:?}", inst));
-                }
+            if let IrInst::Store(var) = inst {
+                let index = locals.len();
+                locals.entry(var.clone()).or_insert(index);
             }
-            max_stack = max_stack.max(stack.len());
         }
 
-        // SysV x86-64: após push %rbp, %rsp fica 0 mod 16.
-        // O ponto imediatamente antes de cada call deve permanecer 0 mod 16.
+        let (entry_states, max_stack) = analyze_stack(code, name, &locals)?;
+
         let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
             "\n    .text\n    .globl {symbol}\n{symbol}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq "
@@ -182,79 +103,83 @@ impl NativeModule {
             ));
         }
 
-        let mut compile_stack: Vec<Kind> = Vec::new();
         let labels: HashMap<usize, String> = (0..code.len())
             .map(|i| (i, format!(".L{symbol}_{i}")))
             .collect();
 
         for (ip, inst) in code.iter().enumerate() {
+            let depth = entry_states[ip]
+                .as_ref()
+                .ok_or_else(|| format!("Nano native: instrução inalcançável {ip} em '{name}'"))?
+                .len();
+
             self.text.push_str(&format!("{}:\n", labels[&ip]));
+
             match inst {
                 IrInst::Const(Value::Number(value)) => {
                     let label = self.add_float(*value);
-                    let slot = compile_stack.len();
                     self.text.push_str(&format!(
                         "    movsd {label}(%rip), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
-                        stack_offset(slot)
+                        stack_offset(depth)
                     ));
-                    compile_stack.push(Kind::Number);
                 }
                 IrInst::Const(Value::Boolean(value)) => {
                     let label = self.add_float(if *value { 1.0 } else { 0.0 });
-                    let slot = compile_stack.len();
                     self.text.push_str(&format!(
                         "    movsd {label}(%rip), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
-                        stack_offset(slot)
+                        stack_offset(depth)
                     ));
-                    compile_stack.push(Kind::Number);
                 }
                 IrInst::Const(Value::Text(value)) => {
                     let label = self.add_text(value);
-                    let slot = compile_stack.len();
                     self.text.push_str(&format!(
                         "    leaq {label}(%rip), %rax\n    movq %rax, {}(%rbp)\n",
-                        stack_offset(slot)
+                        stack_offset(depth)
                     ));
-                    compile_stack.push(Kind::Text);
                 }
                 IrInst::Load(var) => {
-                    let index = *locals.get(var).unwrap();
-                    let slot = compile_stack.len();
+                    let index = *locals.get(var)
+                        .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
                     self.text.push_str(&format!(
                         "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
                         local_offset(index),
-                        stack_offset(slot)
+                        stack_offset(depth)
                     ));
-                    compile_stack.push(Kind::Number);
                 }
                 IrInst::Store(var) => {
-                    let slot = compile_stack.len().checked_sub(1)
-                        .ok_or_else(|| "Nano native: Store sem valor".to_string())?;
+                    let slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
                     let index = *locals.get(var).unwrap();
                     self.text.push_str(&format!(
                         "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
                         stack_offset(slot),
                         local_offset(index)
                     ));
-                    compile_stack.pop();
                 }
                 IrInst::Binary(op) => {
-                    let right = compile_stack.len() - 1;
-                    let left = compile_stack.len() - 2;
+                    let right = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: binary sem operando direito em '{name}'"))?;
+                    let left = depth.checked_sub(2)
+                        .ok_or_else(|| format!("Nano native: binary sem operando esquerdo em '{name}'"))?;
                     self.load_stack(right, "%xmm1");
                     self.load_stack(left, "%xmm0");
+
                     match op {
                         Op::Add => self.text.push_str("    addsd %xmm1, %xmm0\n"),
                         Op::Sub => self.text.push_str("    subsd %xmm1, %xmm0\n"),
                         Op::Mul => self.text.push_str("    mulsd %xmm1, %xmm0\n"),
                         Op::Div => self.text.push_str("    divsd %xmm1, %xmm0\n"),
-                        Op::Mod => self.text.push_str("    call fmod@PLT\n"),
+                        Op::Mod => {
+                            self.text.push_str("    call fmod@PLT\n");
+                        }
                         Op::And | Op::Or => {
                             let zero = self.add_float(0.0);
-                            self.text.push_str(&format!("    ucomisd {zero}(%rip), %xmm0\n"));
-                            self.text.push_str("    setne %al\n    movzbl %al, %eax\n");
-                            self.text.push_str(&format!("    movsd {zero}(%rip), %xmm0\n    ucomisd {zero}(%rip), %xmm1\n"));
-                            self.text.push_str("    setne %cl\n    movzbl %cl, %ecx\n");
+                            self.text.push_str(&format!(
+                                "    ucomisd {zero}(%rip), %xmm0\n    setne %al\n    movzbl %al, %eax\n"
+                            ));
+                            self.text.push_str(&format!(
+                                "    ucomisd {zero}(%rip), %xmm1\n    setne %cl\n    movzbl %cl, %ecx\n"
+                            ));
                             match op {
                                 Op::And => self.text.push_str("    andl %ecx, %eax\n"),
                                 Op::Or => self.text.push_str("    orl %ecx, %eax\n"),
@@ -278,14 +203,14 @@ impl NativeModule {
                             ));
                         }
                     }
+
                     self.text.push_str(&format!(
                         "    movsd %xmm0, {}(%rbp)\n",
                         stack_offset(left)
                     ));
-                    compile_stack.truncate(left + 1);
                 }
                 IrInst::Unary(op) => {
-                    let slot = compile_stack.len().checked_sub(1)
+                    let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
                     self.load_stack(slot, "%xmm0");
                     match op {
@@ -299,12 +224,18 @@ impl NativeModule {
                             ));
                         }
                     }
-                    self.text.push_str(&format!("    movsd %xmm0, {}(%rbp)\n", stack_offset(slot)));
+                    self.text.push_str(&format!(
+                        "    movsd %xmm0, {}(%rbp)\n",
+                        stack_offset(slot)
+                    ));
                 }
                 IrInst::FusedMulAdd => {
-                    let bias = compile_stack.len() - 1;
-                    let right = compile_stack.len() - 2;
-                    let left = compile_stack.len() - 3;
+                    let bias = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: FMA sem bias em '{name}'"))?;
+                    let right = depth.checked_sub(2)
+                        .ok_or_else(|| format!("Nano native: FMA sem direito em '{name}'"))?;
+                    let left = depth.checked_sub(3)
+                        .ok_or_else(|| format!("Nano native: FMA sem esquerdo em '{name}'"))?;
                     self.load_stack(right, "%xmm1");
                     self.load_stack(left, "%xmm0");
                     self.text.push_str("    mulsd %xmm1, %xmm0\n");
@@ -313,29 +244,23 @@ impl NativeModule {
                         "    addsd %xmm1, %xmm0\n    movsd %xmm0, {}(%rbp)\n",
                         stack_offset(left)
                     ));
-                    compile_stack.truncate(left + 1);
                 }
                 IrInst::Call(callee, count) => {
-                    let start = compile_stack.len() - count;
-                    for (arg, reg) in (start..compile_stack.len()).zip(0..8) {
+                    let start = depth.checked_sub(*count)
+                        .ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
+                    for (arg, reg) in (start..depth).zip(0..8) {
                         self.load_stack(arg, &format!("%xmm{reg}"));
                     }
-                    self.text.push_str(&format!(
-                        "    call nano_fn_{}\n",
-                        sanitize(callee)
-                    ));
+                    self.text.push_str(&format!("    call nano_fn_{}\n", sanitize(callee)));
                     self.text.push_str(&format!(
                         "    movsd %xmm0, {}(%rbp)\n",
                         stack_offset(start)
                     ));
-                    compile_stack.truncate(start);
-                    compile_stack.push(Kind::Number);
                 }
                 IrInst::Print => {
-                    let slot = compile_stack.len().checked_sub(1)
-                        .ok_or_else(|| "Nano native: print sem valor".to_string())?;
-                    let kind = compile_stack.pop().unwrap();
-                    match kind {
+                    let slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
+                    match entry_states[ip].as_ref().unwrap().last().copied().unwrap() {
                         Kind::Number => {
                             self.text.push_str(&format!(
                                 "    movsd {}(%rbp), %xmm0\n    leaq nano_fmt(%rip), %rdi\n    movl $1, %eax\n    call printf@PLT\n",
@@ -350,13 +275,10 @@ impl NativeModule {
                         }
                     }
                 }
-                IrInst::Pop => {
-                    compile_stack.pop().ok_or_else(|| "Nano native: pop inválido".to_string())?;
-                }
+                IrInst::Pop => {}
                 IrInst::JumpIfFalse(target) => {
-                    let slot = compile_stack.len().checked_sub(1)
-                        .ok_or_else(|| "Nano native: condição vazia".to_string())?;
-                    compile_stack.pop();
+                    let slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
                     self.load_stack(slot, "%xmm0");
                     let zero = self.add_float(0.0);
                     self.text.push_str(&format!(
@@ -375,12 +297,12 @@ impl NativeModule {
                     ));
                 }
                 IrInst::Return => {
-                    let slot = compile_stack.len().checked_sub(1)
-                        .ok_or_else(|| "Nano native: retorno sem valor".to_string())?;
+                    let slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
                     self.load_stack(slot, "%xmm0");
                     self.text.push_str("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
                 }
-                _ => unreachable!("unsupported instruction rejected in validation"),
+                _ => unreachable!("unsupported instruction rejected in native stack analysis"),
             }
         }
 
@@ -389,6 +311,159 @@ impl NativeModule {
         ));
         Ok(())
     }
+
+
+fn analyze_stack(
+    code: &[IrInst],
+    name: &str,
+    locals: &HashMap<String, usize>,
+) -> Result<(Vec<Option<Vec<Kind>>>, usize), String> {
+    use std::collections::VecDeque;
+
+    let mut states: Vec<Option<Vec<Kind>>> = vec![None; code.len()];
+    let mut work = VecDeque::new();
+    if !code.is_empty() {
+        states[0] = Some(Vec::new());
+        work.push_back(0usize);
+    }
+
+    let mut max_stack = 0usize;
+
+    while let Some(ip) = work.pop_front() {
+        let state = states[ip]
+            .clone()
+            .ok_or_else(|| format!("Nano native: estado de stack ausente em '{name}'"))?;
+
+        max_stack = max_stack.max(state.len());
+        let mut next = state.clone();
+
+        match &code[ip] {
+            IrInst::Const(Value::Number(_)) | IrInst::Const(Value::Boolean(_)) => {
+                next.push(Kind::Number);
+            }
+            IrInst::Const(Value::Text(_)) => {
+                next.push(Kind::Text);
+            }
+            IrInst::Const(_) => {
+                return Err(format!("Nano native: constante não suportada em '{name}'"));
+            }
+            IrInst::Load(var) => {
+                if !locals.contains_key(var) {
+                    return Err(format!("Nano native: variável '{var}' não é conhecida em '{name}'"));
+                }
+                next.push(Kind::Number);
+            }
+            IrInst::Store(var) => {
+                let value = next.pop().ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
+                if value != Kind::Number {
+                    return Err(format!("Nano native: variável '{var}' precisa ser Number"));
+                }
+            }
+            IrInst::Binary(op) => {
+                let right = next.pop().ok_or_else(|| format!("Nano native: binary sem direito em '{name}'"))?;
+                let left = next.pop().ok_or_else(|| format!("Nano native: binary sem esquerdo em '{name}'"))?;
+                if left != Kind::Number || right != Kind::Number {
+                    return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                }
+                next.push(Kind::Number);
+            }
+            IrInst::Unary(op) => {
+                let value = next.pop().ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
+                if value != Kind::Number {
+                    return Err(format!("Nano native: operador {:?} exige Number", op));
+                }
+                next.push(Kind::Number);
+            }
+            IrInst::FusedMulAdd => {
+                for _ in 0..3 {
+                    let value = next.pop().ok_or_else(|| format!("Nano native: FMA inválido em '{name}'"))?;
+                    if value != Kind::Number {
+                        return Err(format!("Nano native: FMA exige Numbers em '{name}'"));
+                    }
+                }
+                next.push(Kind::Number);
+            }
+            IrInst::Call(callee, count) => {
+                if *count > 8 {
+                    return Err(format!("Nano native: chamada '{callee}' tem mais de 8 argumentos"));
+                }
+                for _ in 0..*count {
+                    let value = next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
+                    if value != Kind::Number {
+                        return Err(format!("Nano native: chamada '{callee}' exige argumentos Number"));
+                    }
+                }
+                next.push(Kind::Number);
+            }
+            IrInst::Print => {
+                next.pop().ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
+            }
+            IrInst::Pop => {
+                next.pop().ok_or_else(|| format!("Nano native: pop inválido em '{name}'"))?;
+            }
+            IrInst::JumpIfFalse(_) => {
+                let condition = next.pop().ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
+                if condition != Kind::Number {
+                    return Err(format!("Nano native: condição precisa ser Number em '{name}'"));
+                }
+            }
+            IrInst::Jump(_) => {}
+            IrInst::Return => {
+                let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
+                if value != Kind::Number {
+                    return Err(format!("Nano native: retorno de '{name}' deve ser Number"));
+                }
+            }
+            IrInst::MakeList(_)
+            | IrInst::MakeObject(_)
+            | IrInst::Index
+            | IrInst::Field(_)
+            | IrInst::IterInit
+            | IrInst::IterNext(_, _)
+            | IrInst::Use(_) => {
+                return Err(format!("Nano native: instrução não suportada em '{name}': {:?}", code[ip]));
+            }
+        }
+
+        max_stack = max_stack.max(next.len());
+
+        let successors: Vec<usize> = match &code[ip] {
+            IrInst::Jump(target) => vec![*target],
+            IrInst::JumpIfFalse(target) => {
+                let mut v = Vec::with_capacity(2);
+                if ip + 1 < code.len() { v.push(ip + 1); }
+                v.push(*target);
+                v
+            }
+            IrInst::Return => Vec::new(),
+            _ => {
+                if ip + 1 < code.len() { vec![ip + 1] } else { Vec::new() }
+            }
+        };
+
+        for successor in successors {
+            if successor >= code.len() {
+                continue;
+            }
+            match &states[successor] {
+                None => {
+                    states[successor] = Some(next.clone());
+                    work.push_back(successor);
+                }
+                Some(existing) if existing == &next => {}
+                Some(existing) => {
+                    return Err(format!(
+                        "Nano native: stack divergente no merge em '{name}' no IP {successor}: {:?} vs {:?}",
+                        existing, next
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok((states, max_stack))
+}
+
 
     fn load_stack(&mut self, slot: usize, reg: &str) {
         self.text.push_str(&format!(
