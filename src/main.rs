@@ -1209,7 +1209,11 @@ impl Semantic {
                     "std.async.send" => "send",
                     "std.async.recv" => "recv",
                     "std.async.close_channel" => "close_channel",
-                    "std.async.sleep_ms" => "time_sleep_ms",
+                    "std.async.spawn" => "async_spawn",
+                    "std.async.join" => "async_join",
+                    "std.async.select" => "async_select",
+                    "std.async.all" => "async_all",
+                    "std.async.sleep_ms" => "async_sleep_ms",
                     "std.async.yield" => "thread_yield",
                     other => other,
                 };
@@ -1495,15 +1499,38 @@ impl Semantic {
                     }
                     return Ok(Type::List);
                 }
-                if name == "task_spawn" {
-                    if args.len() != 2 { return Err("Nano: task_spawn() recebe nome da função e List".into()); }
+                if name == "task_spawn" || name == "async_spawn" {
+                    if args.len() != 2 { return Err(format!("Nano: {name}() recebe nome da função e List")); }
                     if self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any {
-                        return Err("Nano: task_spawn() requer nome Text".into());
+                        return Err(format!("Nano: {name}() requer nome Text"));
                     }
                     if self.expr_type(&args[1])? != Type::List && self.expr_type(&args[1])? != Type::Any {
-                        return Err("Nano: task_spawn() requer List de argumentos".into());
+                        return Err(format!("Nano: {name}() requer List de argumentos"));
                     }
                     return Ok(Type::Number);
+                }
+                if name == "async_sleep_ms" {
+                    if args.len() != 1 { return Err("Nano: async.sleep_ms() recebe milissegundos".into()); }
+                    if self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any {
+                        return Err("Nano: async.sleep_ms() requer Number".into());
+                    }
+                    return Ok(Type::Number);
+                }
+                if name == "async_join" {
+                    if args.len() != 1 { return Err("Nano: async.join() recebe handle".into()); }
+                    return Ok(Type::Any);
+                }
+                if name == "async_select" {
+                    if args.len() != 1 { return Err("Nano: async.select() recebe List de handles".into()); }
+                    let ty=self.expr_type(&args[0])?;
+                    if ty != Type::List && ty != Type::Any { return Err("Nano: async.select() requer List".into()); }
+                    return Ok(Type::Number);
+                }
+                if name == "async_all" {
+                    if args.len() != 1 { return Err("Nano: async.all() recebe List de handles".into()); }
+                    let ty=self.expr_type(&args[0])?;
+                    if ty != Type::List && ty != Type::Any { return Err("Nano: async.all() requer List".into()); }
+                    return Ok(Type::List);
                 }
                 if name == "thread_spawn" {
                     if args.len() != 2 { return Err("Nano: thread_spawn() recebe comando e lista de argumentos".into()); }
@@ -1512,7 +1539,7 @@ impl Semantic {
                     }
                     return Ok(Type::Number);
                 }
-                if name == "thread_join" || name == "task_join" {
+                if name == "thread_join" || name == "task_join" || name == "async_join" {
                     if args.len() != 1 { return Err(format!("Nano: {name}() recebe handle")); }
                     if self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any {
                         return Err("Nano: thread_join() requer Number".into());
