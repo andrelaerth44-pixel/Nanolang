@@ -1,12 +1,18 @@
-# Nano 0.5 — Tensor nativo
+# Nano 0.8 — Tensor e backend
+
+print backend()
 
 a = tensor([1, 2, 3, 4], [2, 2])
 b = tensor([5, 6, 7, 8], [2, 2])
 
+print device(a)
+
 c = matmul(a, b)
 
 print shape(c)
+print device(c)
 print len(c)
 
 zeros = zeros([2, 3])
 print shape(zeros)
+print device(zeros)
