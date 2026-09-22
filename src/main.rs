@@ -1,8 +1,13 @@
 mod backend;
+mod dtype;
+mod gpu;
+mod memory;
 mod ir;
 
 use std::{cell::RefCell, env, fs, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
+use dtype::DType;
+use half::{bf16, f16};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
@@ -133,11 +138,52 @@ fn next_tensor_id() -> u64 {
     NEXT_TENSOR_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+#[derive(Debug, Clone)]
+enum TensorStorage {
+    F32(Vec<f32>),
+    F16(Vec<f16>),
+    BF16(Vec<bf16>),
+}
+
+impl TensorStorage {
+    fn from_f32(dtype: DType, data: Vec<f32>) -> Self {
+        match dtype {
+            DType::F32 => Self::F32(data),
+            DType::F16 => Self::F16(data.into_iter().map(f16::from_f32).collect()),
+            DType::BF16 => Self::BF16(data.into_iter().map(bf16::from_f32).collect()),
+        }
+    }
+
+    fn to_f32(&self) -> Vec<f32> {
+        match self {
+            Self::F32(v) => v.clone(),
+            Self::F16(v) => v.iter().map(|x| x.to_f32()).collect(),
+            Self::BF16(v) => v.iter().map(|x| x.to_f32()).collect(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::F32(v) => v.len(),
+            Self::F16(v) => v.len(),
+            Self::BF16(v) => v.len(),
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.len() * match self {
+            Self::F32(_) => 4,
+            Self::F16(_) | Self::BF16(_) => 2,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Tensor {
     id: u64,
-    data: Vec<f32>,
+    storage: TensorStorage,
     shape: Vec<usize>,
+    dtype: DType,
     requires_grad: bool,
     device: backend::BackendKind,
     op: TensorOp,
@@ -148,26 +194,42 @@ impl Tensor {
         Self::new_on(data, shape, requires_grad, backend::BackendKind::Cpu)
     }
 
-    fn new_on(
+    fn new_on(data: Vec<f32>, shape: Vec<usize>, requires_grad: bool, device: backend::BackendKind) -> Result<TensorRef, String> {
+        Self::new_with_dtype_on(data, shape, requires_grad, device, DType::F32)
+    }
+
+    fn new_with_dtype_on(
         data: Vec<f32>,
         shape: Vec<usize>,
         requires_grad: bool,
         device: backend::BackendKind,
+        dtype: DType,
     ) -> Result<TensorRef, String> {
         let expected = shape.iter().copied().product::<usize>();
         if expected != data.len() {
             return Err(format!("Nano: tensor tem {} valores, mas a forma exige {}", data.len(), expected));
         }
         Ok(Rc::new(RefCell::new(Self {
-            id: next_tensor_id(), data, shape, requires_grad, device, op: TensorOp::Leaf,
+            id: next_tensor_id(),
+            storage: TensorStorage::from_f32(dtype, data),
+            shape,
+            dtype,
+            requires_grad,
+            device,
+            op: TensorOp::Leaf,
         })))
     }
 
-    fn derived_on(
+    fn derived_on(data: Vec<f32>, shape: Vec<usize>, requires_grad: bool, device: backend::BackendKind, op: TensorOp) -> Result<TensorRef, String> {
+        Self::derived_dtype_on(data, shape, requires_grad, device, DType::F32, op)
+    }
+
+    fn derived_dtype_on(
         data: Vec<f32>,
         shape: Vec<usize>,
         requires_grad: bool,
         device: backend::BackendKind,
+        dtype: DType,
         op: TensorOp,
     ) -> Result<TensorRef, String> {
         let expected = shape.iter().copied().product::<usize>();
@@ -175,12 +237,29 @@ impl Tensor {
             return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}", data.len(), expected));
         }
         Ok(Rc::new(RefCell::new(Self {
-            id: next_tensor_id(), data, shape, requires_grad, device, op,
+            id: next_tensor_id(),
+            storage: TensorStorage::from_f32(dtype, data),
+            shape,
+            dtype,
+            requires_grad,
+            device,
+            op,
         })))
     }
 
+    fn data_f32(&self) -> Vec<f32> { self.storage.to_f32() }
+    fn set_data_f32(&mut self, data: Vec<f32>) { self.storage = TensorStorage::from_f32(self.dtype, data); }
+    fn data_len(&self) -> usize { self.storage.len() }
+    fn memory_bytes(&self) -> usize { self.storage.bytes() }
+
     fn show(&self) -> String {
-        format!("tensor(shape={:?}, device={})", self.shape, self.device.name())
+        format!(
+            "tensor(shape={:?}, dtype={}, device={}, bytes={})",
+            self.shape,
+            self.dtype.name(),
+            self.device.name(),
+            self.memory_bytes()
+        )
     }
 }
 
@@ -213,7 +292,7 @@ impl Value {
             Self::Text(v) => !v.is_empty(),
             Self::List(v) => !v.is_empty(),
             Self::Object(v) => !v.is_empty(),
-            Self::Tensor(v) => !v.borrow().data.is_empty(),
+            Self::Tensor(v) => v.borrow().data_len() > 0,
             Self::Null => false,
         }
     }
@@ -735,6 +814,31 @@ impl Semantic {
                     if !args.is_empty() { return Err("Nano: backend() não recebe argumentos".into()); }
                     return Ok(Type::Text);
                 }
+                if name == "dtype" {
+                    if args.len() != 1 { return Err("Nano: dtype() recebe 1 tensor".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Tensor && ty != Type::Any {
+                        return Err(format!("Nano: dtype() requer Tensor, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Text);
+                }
+                if name == "memory_bytes" {
+                    if args.len() != 1 { return Err("Nano: memory_bytes() recebe 1 tensor".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Tensor && ty != Type::Any {
+                        return Err(format!("Nano: memory_bytes() requer Tensor, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Number);
+                }
+                if name == "cast" {
+                    if args.len() != 2 { return Err("Nano: cast() recebe tensor e dtype".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    let dtype_ty = self.expr_type(&args[1])?;
+                    if (ty != Type::Tensor && ty != Type::Any) || dtype_ty != Type::Text {
+                        return Err("Nano: cast() requer Tensor e Text".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
                 if name == "device" {
                     if args.len() != 1 { return Err("Nano: device() recebe 1 tensor".into()); }
                     let ty = self.expr_type(&args[0])?;
@@ -886,15 +990,16 @@ enum CliCommand {
     Check,
 }
 
-fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::BackendKind>), String> {
+fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::BackendKind>, Option<DType>), String> {
     let command = match args.get(1).map(String::as_str) {
         Some("run") => CliCommand::Run,
         Some("check") => CliCommand::Check,
-        _ => return Err("uso: nano run|check [--backend cpu|gpu] [arquivo.nano]".into()),
+        _ => return Err("uso: nano run|check [--backend cpu|gpu] [--dtype f32|f16|bf16] [arquivo.nano]".into()),
     };
 
     let mut path = None;
     let mut selected_backend = None;
+    let mut selected_dtype = None;
     let mut index = 2;
 
     while index < args.len() {
@@ -913,6 +1018,15 @@ fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::Bac
                         .map_err(|e| e.to_string())?
                 );
             }
+            "--dtype" => {
+                index += 1;
+                let value = args.get(index)
+                    .ok_or_else(|| "Nano: --dtype requer f32, f16 ou bf16".to_string())?;
+                selected_dtype = Some(DType::parse(value)?);
+            }
+            value if value.starts_with("--dtype=") => {
+                selected_dtype = Some(DType::parse(value.trim_start_matches("--dtype="))?);
+            }
             value if value.starts_with('-') => {
                 return Err(format!("Nano: opção desconhecida '{value}'"));
             }
@@ -925,15 +1039,15 @@ fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::Bac
         index += 1;
     }
 
-    Ok((command, path.unwrap_or_else(|| "main.nano".into()), selected_backend))
+    Ok((command, path.unwrap_or_else(|| "main.nano".into()), selected_backend, selected_dtype))
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let (command, path, cli_backend) = match parse_cli(&args) {
+    let (command, path, cli_backend, cli_dtype) = match parse_cli(&args) {
         Ok(value) => value,
         Err(e) => {
-            eprintln!("Nano 0.8 — {e}");
+            eprintln!("Nano 0.9 — {e}");
             process::exit(2);
         }
     };
@@ -986,7 +1100,18 @@ fn main() {
         },
     };
 
-    let mut runtime = match ir::IrRuntime::with_backend(backend_kind) {
+    let dtype = match cli_dtype {
+        Some(dtype) => dtype,
+        None => match env::var("NANO_DTYPE") {
+            Ok(value) => match DType::parse(&value) {
+                Ok(dtype) => dtype,
+                Err(e) => { eprintln!("Nano: {e}"); process::exit(1); }
+            },
+            Err(_) => DType::F32,
+        },
+    };
+
+    let mut runtime = match ir::IrRuntime::with_backend_and_dtype(backend_kind, dtype) {
         Ok(runtime) => runtime,
         Err(e) => {
             eprintln!("{e}");
@@ -1008,10 +1133,11 @@ mod tests {
     #[test]
     fn cli_defaults_to_run_and_main() {
         let args = vec!["nano".into(), "run".into()];
-        let (command, path, backend) = parse_cli(&args).unwrap();
+        let (command, path, backend, dtype) = parse_cli(&args).unwrap();
         assert_eq!(command, CliCommand::Run);
         assert_eq!(path, "main.nano");
         assert_eq!(backend, None);
+        assert_eq!(dtype, None);
     }
 
     #[test]
@@ -1026,6 +1152,7 @@ mod tests {
         assert_eq!(command, CliCommand::Check);
         assert_eq!(path, "examples/tensor.nano");
         assert_eq!(backend, Some(backend::BackendKind::Cpu));
+        assert_eq!(dtype, None);
     }
 
     #[test]
