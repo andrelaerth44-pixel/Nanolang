@@ -5,10 +5,9 @@
 function escape_text(value) {
     value = replace(value, "\\", "\\\\")
     value = replace(value, "\"", "\\\"")
-    value = replace(value, "
-", "\\n")
-    value = replace(value, "", "\\r")
-    value = replace(value, "	", "\\t")
+    value = replace(value, "\n", "\\n")
+    value = replace(value, "\r", "\\r")
+    value = replace(value, "\t", "\\t")
     return value
 }
 
