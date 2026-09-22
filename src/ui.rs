@@ -70,6 +70,21 @@ impl ApplicationHandler for UiApp {
             WindowEvent::Resized(size) => {
                 let _ = self.events.send(format!("resized:{}:{}", size.width, size.height));
             }
+            WindowEvent::Focused(focused) => {
+                let _ = self.events.send(format!("focused:{focused}"));
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let _ = self.events.send(format!("mouse_move:{:.3}:{:.3}", position.x, position.y));
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let _ = self.events.send(format!("mouse_button:{button:?}:{state:?}"));
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                let _ = self.events.send(format!("key:{:?}:{:?}", event.logical_key, event.state));
+            }
+            WindowEvent::RedrawRequested => {
+                let _ = self.events.send("redraw".into());
+            }
             _ => {}
         }
     }
