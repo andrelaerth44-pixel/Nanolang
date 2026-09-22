@@ -84,10 +84,11 @@ impl Optimizer {
 
         map[original_len] = out.len();
 
+        let output_len = out.len();
         for inst in &mut out {
             match inst {
                 IrInst::Jump(target) | IrInst::JumpIfFalse(target) => {
-                    *target = map.get(*target).copied().unwrap_or(out.len());
+                    *target = map.get(*target).copied().unwrap_or(output_len);
                 }
                 _ => {}
             }
