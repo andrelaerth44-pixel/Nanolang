@@ -480,7 +480,7 @@ function main() {
 
     if ir_path == null || runtime_path == null || output_path == null {
         print "c_backend: configure NANO_SELFHOST_IR, NANO_SELFHOST_RUNTIME and NANO_SELFHOST_C"
-        return
+        return null
     }
 
     ir_text = fs_read_text(ir_path)
