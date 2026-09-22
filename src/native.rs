@@ -343,9 +343,7 @@ impl NativeModule {
                             temp_left,
                             temp_result,
                             op_code(*op),
-                            temp_left,
-                            temp_result,
-                            stack_offset(left)
+                            temp_left
                         ));
                     } else if *op == Op::Add && left_kind == Kind::Text && right_kind == Kind::Text {
                         self.text.push_str(&format!(
