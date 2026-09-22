@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    io::{self, Read, Write},
+    io::{self, BufRead, Read, Write},
 };
 
 #[derive(Default)]
@@ -21,37 +21,42 @@ struct Diagnostic {
 }
 
 fn main() {
-    let mut input = Vec::new();
-    io::stdin().read_to_end(&mut input).unwrap_or(0);
+    let stdin = io::stdin();
+    let mut reader = io::BufReader::new(stdin.lock());
     let mut out = io::stdout();
     let mut server = Server::default();
-    let mut pos = 0usize;
 
-    while pos < input.len() {
-        let Some(offset) = input[pos..]
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-        else {
-            break;
-        };
-        let header_end = pos + offset;
-        let header = String::from_utf8_lossy(&input[pos..header_end]);
-        let len = header
-            .lines()
-            .find_map(|line| {
-                line.split_once(':')
-                    .filter(|(k, _)| k.eq_ignore_ascii_case("Content-Length"))
-                    .and_then(|(_, v)| v.trim().parse::<usize>().ok())
-            })
-            .unwrap_or(0);
-        let body_start = header_end + 4;
-        if body_start + len > input.len() {
-            break;
+    loop {
+        let mut content_length = None;
+        let mut header = String::new();
+
+        loop {
+            header.clear();
+            let read = std::io::BufRead::read_line(&mut reader, &mut header).unwrap_or(0);
+            if read == 0 {
+                return;
+            }
+            let line = header.trim_end_matches(['\r', '\n']);
+            if line.is_empty() {
+                break;
+            }
+            if let Some((key, value)) = line.split_once(':') {
+                if key.eq_ignore_ascii_case("Content-Length") {
+                    content_length = value.trim().parse::<usize>().ok();
+                }
+            }
         }
 
-        let body = &input[body_start..body_start + len];
-        let Ok(request) = serde_json::from_slice::<Value>(body) else {
-            pos = body_start + len;
+        let Some(length) = content_length else {
+            continue;
+        };
+
+        let mut body = vec![0u8; length];
+        if reader.read_exact(&mut body).is_err() {
+            return;
+        }
+
+        let Ok(request) = serde_json::from_slice::<Value>(&body) else {
             continue;
         };
 
@@ -78,7 +83,6 @@ fn main() {
         if server.shutdown && method == "exit" {
             break;
         }
-        pos = body_start + len;
     }
 }
 
