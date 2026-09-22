@@ -961,6 +961,8 @@ impl IrRuntime {
             "std.ui.clear" => "ui_clear",
             "std.ui.rect" => "ui_rect",
             "std.ui.button" => "ui_button",
+            "std.ui.text" => "ui_text",
+            "std.ui.vbox" => "ui_vbox",
             "std.async.channel" => "channel",
             "std.async.send" => "send",
             "std.async.recv" => "recv",
@@ -1696,6 +1698,88 @@ impl IrRuntime {
             return Ok(Value::Null);
         }
 
+        if name == "ui_text" {
+            if args.len() != 8 { return Err("Nano: ui.text() recebe handle,text,x,y,size,r,g,b".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let command = ui::UiCommand::Text {
+                text: text_arg(&args[1], "texto")?,
+                x: number_arg(&args[2], "x")? as f32,
+                y: number_arg(&args[3], "y")? as f32,
+                size: number_arg(&args[4], "tamanho")?.max(1.0) as f32,
+                color: [
+                    number_arg(&args[5], "r")? as f32,
+                    number_arg(&args[6], "g")? as f32,
+                    number_arg(&args[7], "b")? as f32,
+                    1.0,
+                ],
+            };
+            let window = self.ui_windows.get(&handle)
+                .ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            window.command.send(command)
+                .map_err(|_| "Nano: thread da UI não está disponível".to_string())?;
+            return Ok(Value::Null);
+        }
+
+        if name == "ui_vbox" {
+            if args.len() != 7 { return Err("Nano: ui.vbox() recebe handle,x,y,width,row_height,gap,children".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let x = number_arg(&args[1], "x")? as f32;
+            let y = number_arg(&args[2], "y")? as f32;
+            let width = number_arg(&args[3], "width")? as f32;
+            let row_height = number_arg(&args[4], "row_height")?.max(1.0) as f32;
+            let gap = number_arg(&args[5], "gap")?.max(0.0) as f32;
+            let children = match &args[6] {
+                Value::List(values) => {
+                    let mut specs = Vec::with_capacity(values.len());
+                    for value in values {
+                        let Value::Object(object) = value else {
+                            return Err("Nano: ui.vbox() requer uma lista de Objects".into());
+                        };
+                        let kind = object.get("kind")
+                            .and_then(|value| match value { Value::Text(text) => Some(text.as_str()), _ => None })
+                            .ok_or_else(|| "Nano: ui.vbox() exige campo 'kind'".to_string())?;
+                        let number = |name: &str, default: f64| -> f32 {
+                            match object.get(name) {
+                                Some(Value::Number(value)) => *value as f32,
+                                _ => default as f32,
+                            }
+                        };
+                        let color = [number("r", 0.2), number("g", 0.3), number("b", 0.5), 1.0];
+                        match kind {
+                            "text" => {
+                                let text = object.get("text")
+                                    .and_then(|value| match value { Value::Text(text) => Some(text.clone()), _ => None })
+                                    .unwrap_or_default();
+                                specs.push(ui::UiWidgetSpec::Text {
+                                    text,
+                                    size: number("size", 16.0).max(1.0),
+                                    color,
+                                });
+                            }
+                            "button" => {
+                                let id = object.get("id")
+                                    .and_then(|value| match value { Value::Text(text) => Some(text.clone()), _ => None })
+                                    .unwrap_or_else(|| "button".into());
+                                let label = object.get("label")
+                                    .and_then(|value| match value { Value::Text(text) => Some(text.clone()), _ => None })
+                                    .unwrap_or_else(|| id.clone());
+                                specs.push(ui::UiWidgetSpec::Button { id, label, color });
+                            }
+                            "rect" => specs.push(ui::UiWidgetSpec::Rect { color }),
+                            _ => return Err(format!("Nano: ui.vbox() widget desconhecido '{kind}'")),
+                        }
+                    }
+                    specs
+                }
+                _ => return Err("Nano: ui.vbox() requer uma lista".into()),
+            };
+            let window = self.ui_windows.get(&handle)
+                .ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            window.command.send(ui::UiCommand::VBox { x, y, width, row_height, gap, children })
+                .map_err(|_| "Nano: thread da UI não está disponível".to_string())?;
+            return Ok(Value::Null);
+        }
+
         if name == "ui_set_title" {
             if args.len() != 2 { return Err("Nano: ui_set_title() recebe handle e título".into()); }
             let handle = integer_arg(&args[0], "handle")?;
@@ -2340,7 +2424,7 @@ fn is_builtin_name(name: &str) -> bool {
         | "channel" | "send" | "recv" | "close_channel"
         | "net_tcp_connect" | "net_tcp_listen" | "net_tcp_accept" | "net_tcp_send"
         | "net_tcp_recv" | "net_tcp_close" | "net_http_get"
-        | "ui_window" | "ui_set_title" | "ui_close" | "ui_poll_event"
+        | "ui_window" | "ui_set_title" | "ui_close" | "ui_poll_event" | "ui_text" | "ui_vbox"
         | "std.fs.read_text" | "std.fs.write_text" | "std.fs.append_text" | "std.fs.exists"
         | "std.fs.list" | "std.fs.mkdir" | "std.fs.remove"
         | "std.process.spawn" | "std.process.wait"
