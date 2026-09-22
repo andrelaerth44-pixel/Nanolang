@@ -1040,7 +1040,13 @@ impl Semantic {
                 };
                 if matches!(name.as_str(), "ok" | "err" | "is_ok" | "unwrap" | "error") {
                     if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 argumento")); }
-                    return Ok(if name == "is_ok" || name == "error" { Type::Any } else { Type::Object });
+                    return Ok(match name.as_str() {
+                        "ok" | "err" => Type::Object,
+                        "is_ok" => Type::Boolean,
+                        "error" => Type::Text,
+                        "unwrap" => Type::Any,
+                        _ => Type::Any,
+                    });
                 }
                 if name == "assert" {
                     if args.len() != 1 && args.len() != 2 {
