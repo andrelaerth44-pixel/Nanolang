@@ -113,7 +113,7 @@ function lex(path) {
     return tokens
 }
 
-function main() {
+function lexer_main() {
     tokens = lex("main.nano")
     print join(tokens, "\n")
 }
