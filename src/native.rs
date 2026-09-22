@@ -336,7 +336,10 @@ impl NativeModule {
                             temp_result
                         ));
                         self.text.push_str(&format!(
-                            "    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    movl ${op_code}, %edx\n    call nano_any_binary@PLT\n    movq %rax, {}(%rbp)\n",
+                            "    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    movl ${}, %edx\n    call nano_any_binary@PLT\n    movq %rax, {}(%rbp)\n",
+                            temp_left,
+                            temp_result,
+                            op_code(*op),
                             temp_left,
                             temp_result,
                             stack_offset(left)
