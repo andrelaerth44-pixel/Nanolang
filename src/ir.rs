@@ -1330,23 +1330,36 @@ fn step_value(parameter: &Value, gradient: &Value, rate: &Value, backend: &dyn T
     };
 
     {
-        let p=param.borrow(); let g=grad.borrow();
-        if p.shape!=g.shape{return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());}
-        if p.device!=g.device{return Err("Nano: parâmetro e gradiente precisam estar no mesmo dispositivo".into());}
+        let p=param.borrow();
+        let g=grad.borrow();
+        if p.shape!=g.shape {
+            return Err("Nano: parâmetro e gradiente precisam ter o mesmo shape".into());
+        }
+        if p.device!=g.device {
+            return Err("Nano: parâmetro e gradiente precisam estar no mesmo dispositivo".into());
+        }
         if backend.kind()==backend::BackendKind::Gpu {
             backend.step_resident_async(p.id,g.id,p.data_len(),lr)
                 .map_err(|e|format!("Nano: GPU step: {e}"))?;
+            drop(p);
+            drop(g);
             param.borrow_mut().mark_host_stale();
             return Ok(Value::Tensor(param));
         }
     }
-    let (mut data, gradient) = {
-    for (value, delta) in data.iter_mut().zip(&gradient) {
-        *value -= lr * delta;
+
+    let (mut data, gradient)={
+        let p=param.borrow();
+        let g=grad.borrow();
+        (p.data_f32(),g.data_f32())
+    };
+    for (value,delta) in data.iter_mut().zip(&gradient) {
+        *value-=lr*delta;
     }
     let id=param.borrow().id;
     param.borrow_mut().set_data_f32(data.clone());
-    backend.sync_tensor(id,&data).map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
+    backend.sync_tensor(id,&data)
+        .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
     Ok(Value::Tensor(param))
 }
 
