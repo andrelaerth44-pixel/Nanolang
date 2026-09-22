@@ -702,7 +702,10 @@ impl IrRuntime {
             let v_hat = state.v[i] / (1.0 - beta2.powf(t));
             data[i] -= lr * m_hat / (v_hat.sqrt() + eps);
         }
-        param.borrow_mut().set_data_f32(data);
+        let id=param.borrow().id;
+        param.borrow_mut().set_data_f32(data.clone());
+        self.backend.sync_tensor(id,&data)
+            .map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
 
         Ok(Value::Tensor(std::rc::Rc::clone(&param)))
     }
