@@ -59,7 +59,7 @@ cargo run -- run --backend cpu examples/tensor.nano
 cargo run -- run --backend gpu examples/tensor.nano
 ```
 
-O backend `gpu` já é reconhecido, mas ainda falha explicitamente porque o kernel GPU real ainda não foi implementado.
+O backend `gpu` usa o backend wgpu real. Em ambientes sem dispositivo ou capability compatível, o runtime retorna erro explícito.
 
 A mesma seleção pode ser feita com:
 
@@ -83,7 +83,7 @@ nano check examples/tensor.nano
 nano run --backend cpu examples/tensor.nano
 ```
 
-A seleção de `gpu` já existe na CLI, mas o backend GPU real ainda não está implementado.
+A seleção de `gpu` entra no runtime Tensor residente; limitações de hardware/capability são reportadas pelo backend.
 
 Quando `run` for executado dentro de um projeto sem arquivo explícito, a convenção será procurar automaticamente por `main.nano`.
 
@@ -114,7 +114,13 @@ O núcleo atual contém:
 - introspecção com `backend()`, `device()`, `dtype()` e `memory_bytes()`;
 - `cast()` entre `f32`, `f16` e `bf16`;
 - storage compacto para `f16` e `bf16`;
-- seleção explícita de backend no CLI;
+- seleção explícita de backend no CLI (cpu/gpu/npu);
+- LSP com autocomplete, hover, definição, referências, rename, assinatura, símbolos, formatter e Quick Fixes;
+- formatter e linter próprios;
+- filesystem, processos, rede TCP/HTTP, concorrência, canais, tarefas, tempo e UI nativa;
+- package manager com Nano.toml/Nano.lock;
+- test runner integrado com assert/Result;
+- backend CPU nativo x86-64 Linux e provider NPU via ABI;
 - autograd com `grad()`;
 - atualização de parâmetros com `step()`;
 - otimizador Adam com `adam()`;
@@ -127,7 +133,7 @@ A regra é: capacidades novas não devem transformar Nano numa linguagem cheia d
 
 Tensor agora possui storage compacto `f32/f16/bf16`, seleção de backend, planner de memória, caminho de transferência e kernels GPU reais. Expressões do padrão `a * b + c` também podem ser emitidas como uma operação FMA única, evitando duas passagens elementwise.
 
-A meta de engenharia é permitir código Nano muito curto para dados e IA. Suporte a treinamento de modelos muito grandes, incluindo uma classe de 5 bilhões de parâmetros, será tratado como uma meta de backend e memória — não como uma promessa de que a VM atual já consegue fazer isso em qualquer GPU.
+A meta de engenharia é permitir código Nano muito curto para dados e IA. Treinamento de modelos muito grandes, incluindo uma classe de 5 bilhões de parâmetros, continua sendo uma meta de backend/memória: a arquitetura já separa frontend, IR e backends, mas isso não implica disponibilidade uniforme em qualquer GPU.
 
 Depois entram interface, eventos, aplicações, paralelismo, IA avançada, compressão e execução nativa.
 
