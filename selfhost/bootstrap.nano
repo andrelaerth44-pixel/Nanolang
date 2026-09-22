@@ -19,7 +19,7 @@ function compile_file(path) {
 }
 
 function main() {
-    result = compile_file("main.nano")
+    result = compile_file("examples/main.nano")
 
     if result.ok {
         print result.ir
