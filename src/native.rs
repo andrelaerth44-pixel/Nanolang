@@ -1109,9 +1109,7 @@ fn analyze_stack(
                         next.pop();
                     }
                     next.push(Kind::Number);
-                    continue;
-                }
-                if callee == "len" || callee == "std.collections.len" {
+                } else if callee == "len" || callee == "std.collections.len" {
                     if *count != 1 {
                         return Err("Nano native: len() recebe exatamente 1 argumento".into());
                     }
@@ -1120,19 +1118,19 @@ fn analyze_stack(
                         return Err("Nano native: len() exige Text, List ou Object".into());
                     }
                     next.push(Kind::Number);
-                    continue;
+                } else {
+                    if *count > 8 {
+                        return Err(format!("Nano native: chamada '{callee}' tem mais de 8 argumentos"));
+                    }
+                    let start = next.len().checked_sub(*count)
+                        .ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
+                    let arg_kinds = next[start..].to_vec();
+                    for _ in 0..*count {
+                        next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
+                    }
+                    calls.push((callee.clone(), arg_kinds));
+                    next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
                 }
-                if *count > 8 {
-                    return Err(format!("Nano native: chamada '{callee}' tem mais de 8 argumentos"));
-                }
-                let start = next.len().checked_sub(*count)
-                    .ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
-                let arg_kinds = next[start..].to_vec();
-                for _ in 0..*count {
-                    next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
-                }
-                calls.push((callee.clone(), arg_kinds));
-                next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
             }
             IrInst::CallValue(count) => {
                 if *count > 8 {
