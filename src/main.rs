@@ -403,7 +403,7 @@ enum Expr {
 #[derive(Debug, Clone, Copy)]
 enum UnaryOp { Neg, Not }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op { Add, Sub, Mul, Div, Mod, Eq, Ne, Gt, Ge, Lt, Le, And, Or }
 
 #[derive(Debug, Clone)]
