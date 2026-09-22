@@ -50,30 +50,47 @@ impl Optimizer {
     }
 
     fn optimize_code(&self, code: Vec<IrInst>) -> Vec<IrInst> {
-        let mut out: Vec<IrInst> = Vec::with_capacity(code.len());
+        let original_len = code.len();
+        let mut out: Vec<IrInst> = Vec::with_capacity(original_len);
+        let mut map: Vec<usize> = vec![0; original_len + 1];
 
-        for inst in code {
+        for (old_index, inst) in code.into_iter().enumerate() {
+            let mut folded = false;
+
             if let IrInst::Binary(op) = &inst {
                 if out.len() >= 2 {
                     let right = out[out.len() - 1].clone();
                     let left = out[out.len() - 2].clone();
                     if let (IrInst::Const(a), IrInst::Const(b)) = (left, right) {
                         if let Ok(value) = binary(a, *op, b) {
-                            out.truncate(out.len() - 2);
+                            let new_index = out.len() - 2;
+                            out.truncate(new_index);
                             out.push(IrInst::Const(value));
-                            continue;
+                            map[old_index.saturating_sub(2)] = new_index;
+                            map[old_index.saturating_sub(1)] = new_index;
+                            map[old_index] = new_index;
+                            folded = true;
                         }
                     }
                 }
             }
 
-            if let IrInst::Jump(target) = &inst {
-                if *target == out.len() + 1 {
-                    continue;
-                }
+            if !folded {
+                let new_index = out.len();
+                map[old_index] = new_index;
+                out.push(inst);
             }
+        }
 
-            out.push(inst);
+        map[original_len] = out.len();
+
+        for inst in &mut out {
+            match inst {
+                IrInst::Jump(target) | IrInst::JumpIfFalse(target) => {
+                    *target = map.get(*target).copied().unwrap_or(out.len());
+                }
+                _ => {}
+            }
         }
 
         out
