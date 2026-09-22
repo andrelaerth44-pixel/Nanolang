@@ -1038,6 +1038,10 @@ impl Semantic {
                     "std.async.close_channel" => "close_channel",
                     other => other,
                 };
+                if matches!(name.as_str(), "ok" | "err" | "is_ok" | "unwrap" | "error") {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 argumento")); }
+                    return Ok(if name == "is_ok" || name == "error" { Type::Any } else { Type::Object });
+                }
                 if name == "assert" {
                     if args.len() != 1 && args.len() != 2 {
                         return Err("Nano: assert() recebe condição e, opcionalmente, mensagem".into());
