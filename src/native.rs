@@ -113,23 +113,6 @@ impl NativeModule {
                     }
                     stack.push(Kind::Number);
                 }
-                IrInst::Unary(op) => {
-                    let slot = compile_stack.len().checked_sub(1)
-                        .ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
-                    self.load_stack(slot, "%xmm0");
-                    match op {
-                        crate::UnaryOp::Neg => {
-                            self.text.push_str("    xorpd %xmm1, %xmm1\n    subsd %xmm0, %xmm1\n    movsd %xmm1, %xmm0\n");
-                        }
-                        crate::UnaryOp::Not => {
-                            let zero = self.add_float(0.0);
-                            self.text.push_str(&format!(
-                                "    ucomisd {zero}(%rip), %xmm0\n    sete %al\n    movzbl %al, %eax\n    cvtsi2sd %eax, %xmm0\n"
-                            ));
-                        }
-                    }
-                    self.text.push_str(&format!("    movsd %xmm0, {}(%rbp)\n", stack_offset(slot)));
-                }
                 IrInst::FusedMulAdd => {
                     for _ in 0..3 {
                         if stack.pop().is_none() {
@@ -285,6 +268,23 @@ impl NativeModule {
                         stack_offset(left)
                     ));
                     compile_stack.truncate(left + 1);
+                }
+                IrInst::Unary(op) => {
+                    let slot = compile_stack.len().checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
+                    self.load_stack(slot, "%xmm0");
+                    match op {
+                        crate::UnaryOp::Neg => {
+                            self.text.push_str("    xorpd %xmm1, %xmm1\n    subsd %xmm0, %xmm1\n    movsd %xmm1, %xmm0\n");
+                        }
+                        crate::UnaryOp::Not => {
+                            let zero = self.add_float(0.0);
+                            self.text.push_str(&format!(
+                                "    ucomisd {zero}(%rip), %xmm0\n    sete %al\n    movzbl %al, %eax\n    cvtsi2sd %eax, %xmm0\n"
+                            ));
+                        }
+                    }
+                    self.text.push_str(&format!("    movsd %xmm0, {}(%rbp)\n", stack_offset(slot)));
                 }
                 IrInst::FusedMulAdd => {
                     let bias = compile_stack.len() - 1;
