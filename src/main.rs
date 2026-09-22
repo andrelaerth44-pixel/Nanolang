@@ -941,6 +941,34 @@ impl Semantic {
                     }
                     return Ok(Type::Number);
                 }
+                if name == "ui_window" {
+                    if args.len() != 3 { return Err("Nano: ui_window() recebe título, largura e altura".into()); }
+                    if self.expr_type(&args[0])? != Type::Text
+                        || self.expr_type(&args[1])? != Type::Number
+                        || self.expr_type(&args[2])? != Type::Number {
+                        return Err("Nano: ui_window() requer Text, Number, Number".into());
+                    }
+                    return Ok(Type::Number);
+                }
+                if name == "ui_set_title" {
+                    if args.len() != 2 { return Err("Nano: ui_set_title() recebe handle e título".into()); }
+                    if (self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any)
+                        || (self.expr_type(&args[1])? != Type::Text && self.expr_type(&args[1])? != Type::Any) {
+                        return Err("Nano: ui_set_title() requer Number, Text".into());
+                    }
+                    return Ok(Type::Null);
+                }
+                if name == "ui_close" {
+                    if args.len() != 1 { return Err("Nano: ui_close() recebe handle".into()); }
+                    return Ok(Type::Null);
+                }
+                if name == "ui_poll_event" {
+                    if args.len() != 1 { return Err("Nano: ui_poll_event() recebe handle".into()); }
+                    if self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any {
+                        return Err("Nano: ui_poll_event() requer Number".into());
+                    }
+                    return Ok(Type::Text);
+                }
                 if name == "backend" {
                     if !args.is_empty() { return Err("Nano: backend() não recebe argumentos".into()); }
                     return Ok(Type::Text);
