@@ -893,6 +893,10 @@ impl Semantic {
     }
 
     fn check(&mut self, program: &[Stmt]) -> Result<(), String> {
+        self.check_with_base(program, None)
+    }
+
+    pub(crate) fn check_with_base(&mut self, program: &[Stmt], base_dir: Option<&Path>) -> Result<(), String> {
         for stmt in program {
             if let Stmt::Function(name, params, _) = stmt {
                 self.functions.entry(name.clone()).or_insert((params.len(), Type::Any));
@@ -906,7 +910,15 @@ impl Semantic {
             if path.starts_with("std.") {
                 continue;
             }
-            let source = fs::read_to_string(path)
+            let requested = Path::new(path);
+            let resolved = if requested.is_absolute() {
+                requested.to_path_buf()
+            } else if let Some(base) = base_dir {
+                base.join(requested)
+            } else {
+                requested.to_path_buf()
+            };
+            let source = fs::read_to_string(&resolved)
                 .map_err(|e| format!("Nano: não foi possível carregar módulo '{path}' para análise semântica: {e}"))?;
             // Register imported function signatures without recursively parsing the
             // module here. The runtime/compiler loads and validates the module itself;
