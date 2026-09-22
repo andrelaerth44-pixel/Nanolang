@@ -421,7 +421,7 @@ impl NativeModule {
             }
             text.push('\n');
         }
-        text.push_str("\n    .section .text\n    .globl main\nmain:\n    call nano_fn__main\n    xorl %eax, %eax\n    ret\n");
+        text.push_str("\n    .section .text\n    .globl main\nmain:\n    subq $8, %rsp\n    call nano_fn__main\n    addq $8, %rsp\n    xorl %eax, %eax\n    ret\n");
         text.push_str("\n    .section .note.GNU-stack,\"\",@progbits\n");
         text
     }
