@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
