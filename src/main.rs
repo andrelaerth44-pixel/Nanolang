@@ -868,13 +868,49 @@ fn cmp(a: Value, b: Value, f: fn(f64,f64)->bool) -> Result<Value,String> {
     }
 }
 
+fn parse_cli(args: &[String]) -> Result<(String, Option<backend::BackendKind>), String> {
+    if args.get(1).map(String::as_str) != Some("run") {
+        return Err("uso: nano run [--backend cpu|gpu] [arquivo.nano]".into());
+    }
+
+    let mut path = None;
+    let mut selected_backend = None;
+    let mut index = 2;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--backend" => {
+                index += 1;
+                let value = args.get(index)
+                    .ok_or_else(|| "Nano: --backend requer cpu ou gpu".to_string())?;
+                selected_backend = Some(backend::BackendKind::parse(value)?);
+            }
+            value if value.starts_with("--backend=") => {
+                selected_backend = Some(
+                    backend::BackendKind::parse(value.trim_start_matches("--backend="))?
+                );
+            }
+            value if value.starts_with('-') => {
+                return Err(format!("Nano: opção desconhecida '{value}'"));
+            }
+            value => {
+                if path.replace(value.to_string()).is_some() {
+                    return Err("Nano: apenas um arquivo .nano pode ser informado".into());
+                }
+            }
+        }
+        index += 1;
+    }
+
+    Ok((path.unwrap_or_else(|| "main.nano".into()), selected_backend))
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let path = match args.as_slice() {
-        [_, command] if command == "run" => "main.nano".to_string(),
-        [_, command, file] if command == "run" => file.clone(),
-        _ => {
-            eprintln!("Nano 0.7 — uso: nano run [arquivo.nano]");
+    let (path, cli_backend) = match parse_cli(&args) {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("Nano 0.7 — {e}");
             process::exit(2);
         }
     };
@@ -909,7 +945,9 @@ fn main() {
     let mut optimizer = ir::Optimizer::new();
     let ir_program = optimizer.optimize_program(ir_program);
 
-    let backend_kind = match env::var("NANO_BACKEND") {
+    let backend_kind = match cli_backend {
+        Some(kind) => kind,
+        None => match env::var("NANO_BACKEND") {
         Ok(value) => match backend::BackendKind::parse(&value) {
             Ok(kind) => kind,
             Err(e) => {
@@ -917,7 +955,8 @@ fn main() {
                 process::exit(1);
             }
         },
-        Err(_) => backend::BackendKind::Cpu,
+            Err(_) => backend::BackendKind::Cpu,
+        },
     };
 
     let mut runtime = match ir::IrRuntime::with_backend(backend_kind) {
