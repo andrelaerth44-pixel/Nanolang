@@ -1976,4 +1976,75 @@ mod ir_tests {
         let runtime = IrRuntime::new();
         assert_eq!(runtime.backend.kind(), BackendKind::Cpu);
     }
+
+
+    #[test]
+    fn standard_library_strings_and_math_work() {
+        let mut runtime = IrRuntime::new();
+
+        assert_eq!(
+            runtime.call("upper", vec![Value::Text("nano".into())]).unwrap(),
+            Value::Text("NANO".into())
+        );
+        assert_eq!(
+            runtime.call("substring", vec![
+                Value::Text("Nanolang".into()),
+                Value::Number(0.0),
+                Value::Number(4.0),
+            ]).unwrap(),
+            Value::Text("Nano".into())
+        );
+        assert_eq!(
+            runtime.call("split", vec![
+                Value::Text("a,b,c".into()),
+                Value::Text(",".into()),
+            ]).unwrap(),
+            Value::List(vec![
+                Value::Text("a".into()),
+                Value::Text("b".into()),
+                Value::Text("c".into()),
+            ])
+        );
+        assert_eq!(
+            runtime.call("pow", vec![
+                Value::Number(2.0),
+                Value::Number(8.0),
+            ]).unwrap(),
+            Value::Number(256.0)
+        );
+        assert_eq!(
+            runtime.call("min", vec![
+                Value::Number(4.0),
+                Value::Number(2.0),
+            ]).unwrap(),
+            Value::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn standard_library_filesystem_round_trip() {
+        let mut runtime = IrRuntime::new();
+        let path = std::env::temp_dir().join(format!(
+            "nano-test-{}.txt",
+            std::process::id()
+        ));
+        let path_text = path.to_string_lossy().into_owned();
+
+        runtime.call("fs_write_text", vec![
+            Value::Text(path_text.clone()),
+            Value::Text("hello nano".into()),
+        ]).unwrap();
+
+        let read = runtime.call("fs_read_text", vec![
+            Value::Text(path_text.clone()),
+        ]).unwrap();
+
+        assert_eq!(read, Value::Text("hello nano".into()));
+
+        runtime.call("fs_remove", vec![
+            Value::Text(path_text.clone()),
+        ]).unwrap();
+
+        assert!(!path.exists());
+    }
 }
