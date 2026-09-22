@@ -1006,7 +1006,7 @@ fn tensor_elementwise(
             std::rc::Rc::clone(a),
             std::rc::Rc::clone(b),
         ),
-    ))
+    )?)
 }
 
 fn reduce_value(
