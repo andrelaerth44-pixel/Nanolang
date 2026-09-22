@@ -14,3 +14,6 @@ Uso conceitual:
 4. compare esse IR com o IR produzido pelo bootstrap Rust.
 
 Este é o começo do bootstrap. O compilador Rust continua sendo a referência até que os dois pipelines passem pelos mesmos testes de conformidade.
+## Bootstrap
+
+`selfhost/bootstrap.nano` encadeia lexer, parser e compilador Nano e produz o IR textual do `main.nano`.
