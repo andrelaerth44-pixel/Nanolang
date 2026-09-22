@@ -58,3 +58,4 @@ jobs:
           cargo run --quiet -- check selfhost/parser.nano
           cargo run --quiet -- check selfhost/compiler.nano
           cargo run --quiet -- check examples/ui.nano
+          cargo run --quiet -- test tests
