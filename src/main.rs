@@ -1267,6 +1267,7 @@ fn cmp(a: Value, b: Value, f: fn(f64,f64)->bool) -> Result<Value,String> {
 enum CliCommand {
     Run,
     Check,
+    Test,
     BuildNative,
 }
 
@@ -1276,8 +1277,9 @@ fn parse_cli(
     let command = match args.get(1).map(String::as_str) {
         Some("run") => CliCommand::Run,
         Some("check") => CliCommand::Check,
+        Some("test") => CliCommand::Test,
         Some("build") => CliCommand::BuildNative,
-        _ => return Err("uso: nano run|check|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo.nano]".into()),
+        _ => return Err("uso: nano run|check|test|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo]".into()),
     };
 
     let mut path = None;
@@ -1343,6 +1345,10 @@ fn parse_cli(
         return Err("Nano: --native só é válido com 'build'".into());
     }
 
+    if matches!(command, CliCommand::Test) && native_requested {
+        return Err("Nano: --native não é válido com 'test'".into());
+    }
+
     if matches!(command, CliCommand::BuildNative) && output.is_none() {
         let source_path = path.as_deref().unwrap_or("main.nano");
         let stem = Path::new(source_path)
@@ -1361,6 +1367,69 @@ fn parse_cli(
     ))
 }
 
+fn run_tests(path: &str) -> Result<(), String> {
+    let root = Path::new(path);
+    let mut files = Vec::new();
+
+    if root.is_file() {
+        if root.extension().and_then(|v| v.to_str()) == Some("nano") {
+            files.push(root.to_path_buf());
+        }
+    } else if root.is_dir() {
+        collect_nano_files(root, &mut files)?;
+    } else {
+        return Err(format!("Nano: caminho de testes '{}' não existe", root.display()));
+    }
+
+    files.sort();
+    if files.is_empty() {
+        return Err(format!("Nano: nenhum arquivo .nano encontrado em '{}'", root.display()));
+    }
+
+    let mut passed = 0usize;
+    for file in files {
+        let source = fs::read_to_string(&file)
+            .map_err(|e| format!("Nano: teste '{}': {e}", file.display()))?;
+        let tokens = Lexer::new(&source).lex()
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+        let program = Parser::new(tokens).program()
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+
+        let mut semantic = Semantic::new();
+        semantic.check(&program)
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+
+        let mut compiler = ir::Compiler::new();
+        let ir_program = compiler.compile(&program)
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+        let mut optimizer = ir::Optimizer::new();
+        let ir_program = optimizer.optimize_program(ir_program);
+
+        let mut runtime = ir::IrRuntime::new();
+        runtime.run(&ir_program)
+            .map_err(|e| format!("{}: {e}", file.display()))?;
+
+        println!("PASS {}", file.display());
+        passed += 1;
+    }
+
+    println!("Nano test: {passed} teste(s) passaram.");
+    Ok(())
+}
+
+fn collect_nano_files(dir: &Path, output: &mut Vec<std::path::PathBuf>) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| format!("Nano: não foi possível ler '{}': {e}", dir.display()))? {
+        let entry = entry.map_err(|e| format!("Nano: erro ao ler diretório '{}': {e}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nano_files(&path, output)?;
+        } else if path.extension().and_then(|v| v.to_str()) == Some("nano") {
+            output.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let (command, path, cli_backend, cli_dtype, output) = match parse_cli(&args) {
@@ -1370,6 +1439,14 @@ fn main() {
             process::exit(2);
         }
     };
+    if command == CliCommand::Test {
+        if let Err(e) = run_tests(&path) {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        return;
+    }
+
     let source = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => { eprintln!("Nano: não foi possível ler '{path}': {e}"); process::exit(1); }
