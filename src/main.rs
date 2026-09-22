@@ -613,7 +613,9 @@ impl Semantic {
                 }
                 if name == "tensor" {
                     if args.len() != 2 { return Err("Nano: tensor() recebe dados e shape".into()); }
-                    if args.iter().any(|arg| self.expr_type(arg)? != Type::List) {
+                    let data_type = self.expr_type(&args[0])?;
+                    let shape_type = self.expr_type(&args[1])?;
+                    if data_type != Type::List || shape_type != Type::List {
                         return Err("Nano: tensor() requer lista de dados e lista de shape".into());
                     }
                     return Ok(Type::Tensor);
