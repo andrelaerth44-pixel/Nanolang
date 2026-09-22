@@ -718,6 +718,36 @@ impl IrRuntime {
             return Ok(Value::Number(status.code().unwrap_or(-1) as f64));
         }
 
+        if name == "net_http_get" {
+            if args.len() != 3 { return Err("Nano: net_http_get() recebe host, porta e caminho".into()); }
+            let host = text_arg(&args[0], "host")?;
+            let port = integer_arg(&args[1], "porta")?;
+            let path = text_arg(&args[2], "caminho")?;
+            let mut stream = TcpStream::connect((host.as_str(), port as u16))
+                .map_err(|e| format!("Nano: HTTP connect: {e}"))?;
+            let request = format!(
+                "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Nano/0.1\r\n\r\n"
+            );
+            stream.write_all(request.as_bytes())
+                .map_err(|e| format!("Nano: HTTP send: {e}"))?;
+            let mut response = String::new();
+            stream.read_to_string(&mut response)
+                .map_err(|e| format!("Nano: HTTP recv: {e}"))?;
+            if let Some((headers, body)) = response.split_once("\r\n\r\n") {
+                let status_ok = headers.lines().next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .and_then(|code| code.parse::<u16>().ok())
+                    .map(|code| (200..300).contains(&code))
+                    .unwrap_or(false);
+                if !status_ok {
+                    let status = headers.lines().next().unwrap_or("HTTP");
+                    return Err(format!("Nano: HTTP GET falhou: {status}"));
+                }
+                return Ok(Value::Text(body.to_string()));
+            }
+            return Err("Nano: resposta HTTP inválida".into());
+        }
+
         if name == "net_tcp_connect" {
             if args.len() != 2 { return Err("Nano: net_tcp_connect() recebe host e porta".into()); }
             let host = text_arg(&args[0], "host")?;
