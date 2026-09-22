@@ -1,0 +1,14 @@
+function add(a, b) {
+    return a + b
+}
+
+x = add(2, 3)
+print x
+print -4 + 10
+print 17 % 5
+print 7 > 3 && 2 < 4
+if x == 5 {
+    print 1
+} else {
+    print 0
+}
