@@ -1,0 +1,486 @@
+# Nano self-hosted C backend v1.0
+# IR textual -> standalone C + embedded native runtime.
+# This stage does not parse IR in Rust and does not call the Rust native backend.
+
+function escape_c(value) {
+    value = replace(value, "\\", "\\\\")
+    value = replace(value, "\"", "\\\"")
+    value = replace(value, "\n", "\\n")
+    value = replace(value, "\r", "\\r")
+    value = replace(value, "\t", "\\t")
+    return value
+}
+
+function words(line) {
+    return split(line, " ")
+}
+
+function label_targets(code) {
+    result = {}
+    i = 0
+    while i < len(code) {
+        parts = words(code[i])
+        if len(parts) >= 2 && parts[0] == "label" {
+            result[parts[1]] = i
+        }
+        i = i + 1
+    }
+    return result
+}
+
+function op_code(op) {
+    if op == "+" { return "0" }
+    if op == "-" { return "1" }
+    if op == "*" { return "2" }
+    if op == "/" { return "3" }
+    if op == "%" { return "4" }
+    if op == "==" { return "5" }
+    if op == "!=" { return "6" }
+    if op == ">" { return "7" }
+    if op == ">=" { return "8" }
+    if op == "<" { return "9" }
+    if op == "<=" { return "10" }
+    if op == "&&" { return "11" }
+    if op == "||" { return "12" }
+    return ""
+}
+
+function unary_code(op) {
+    if op == "-" { return "0" }
+    return "1"
+}
+
+function symbol(name) {
+    result = replace(name, ".", "_")
+    result = replace(result, "-", "_")
+    return result
+}
+
+function emit_case(index, line, labels) {
+    parts = words(line)
+    if len(parts) == 0 || parts[0] == "" {
+        return ["        ip = ip + 1;", "        continue;"]
+    }
+
+    op = parts[0]
+    if op == "const" {
+        if len(parts) < 2 { return ["        nano_fail(\"invalid const\");"] }
+        value = substring(line, 6, len(line))
+        if value == "null" {
+            return ["        stack[sp++] = nano_box_null();", "        ip = ip + 1;", "        continue;"]
+        }
+        if value == "true" || value == "false" {
+            return [
+                "        stack[sp++] = nano_box_bool(" + value + " ? 1.0 : 0.0);",
+                "        ip = ip + 1;",
+                "        continue;"
+            ]
+        }
+        if starts_with(value, "\"") {
+            text = substring(value, 1, len(value) - 1)
+            return [
+                "        stack[sp++] = nano_box_text(\"" + escape_c(text) + "\");",
+                "        ip = ip + 1;",
+                "        continue;"
+            ]
+        }
+        return [
+            "        stack[sp++] = nano_box_number(" + value + ");",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "load" {
+        return [
+            "        stack[sp++] = nano_env_get(&env, \"" + escape_c(parts[1]) + "\");",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "store" {
+        return [
+            "        nano_env_set(&env, \"" + escape_c(parts[1]) + "\", stack[--sp]);",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "binary" {
+        code = op_code(parts[1])
+        return [
+            "        { NanoValue *right = stack[--sp]; NanoValue *left = stack[--sp]; stack[sp++] = nano_any_binary(left, " + code + ", right); }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "unary" {
+        return [
+            "        stack[sp-1] = nano_any_unary(stack[sp-1], " + unary_code(parts[1]) + ");",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "make_list" {
+        count = 0
+        if len(parts) >= 2 { count = to_number(parts[1]) }
+        out = [
+            "        {",
+            "            NanoValue *list = nano_list_new();",
+            "            int base = sp - " + to_text(count) + ";",
+            "            for (int i = 0; i < " + to_text(count) + "; ++i) nano_list_push(list, stack[base + i]);",
+            "            sp = base;",
+            "            stack[sp++] = list;",
+            "        }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+        return out
+    }
+
+    if op == "make_object" {
+        keys = ""
+        if len(parts) >= 2 { keys = parts[1] }
+        key_list = []
+        if keys != "" { key_list = split(keys, ",") }
+        count = len(key_list)
+        out = [
+            "        {",
+            "            NanoValue *object = nano_object_new();",
+            "            int base = sp - " + to_text(count) + ";"
+        ]
+        j = 0
+        while j < count {
+            out = append(out, "            nano_object_put(object, \"" + escape_c(key_list[j]) + "\", stack[base + " + to_text(j) + "]);")
+            j = j + 1
+        }
+        out = append(out, "            sp = base;", "            stack[sp++] = object;", "        }", "        ip = ip + 1;", "        continue;")
+        return out
+    }
+
+    if op == "index" {
+        return [
+            "        { NanoValue *index = stack[--sp]; NanoValue *target = stack[--sp]; stack[sp++] = nano_any_index(target, index); }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "field" {
+        return [
+            "        { NanoValue *target = stack[--sp]; stack[sp++] = nano_any_field(target, \"" + escape_c(parts[1]) + "\"); }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "set_index" {
+        return [
+            "        { NanoValue *value = stack[--sp]; NanoValue *index = stack[--sp]; NanoValue *target = stack[--sp]; stack[sp++] = nano_any_set_index(target, index, value); }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "set_field" {
+        return [
+            "        { NanoValue *value = stack[--sp]; NanoValue *target = stack[--sp]; stack[sp++] = nano_any_set_field(target, \"" + escape_c(parts[1]) + "\", value); }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "call" {
+        count = to_number(parts[2])
+        name = parts[1]
+        out = [
+            "        {",
+            "            NanoValue *call_args[" + to_text(max(1, count)) + "];",
+            "            for (int i = 0; i < " + to_text(count) + "; ++i) call_args[i] = stack[sp - " + to_text(count) + " + i];",
+            "            sp -= " + to_text(count) + ";",
+            "            stack[sp++] = nano_call_dynamic(\"" + escape_c(name) + "\", call_args, " + to_text(count) + ");",
+            "        }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+        return out
+    }
+
+    if op == "call_value" {
+        count = to_number(parts[1])
+        return [
+            "        {",
+            "            NanoValue *call_args[" + to_text(max(1, count)) + "];",
+            "            for (int i = 0; i < " + to_text(count) + "; ++i) call_args[i] = stack[sp - " + to_text(count) + " + i];",
+            "            sp -= " + to_text(count) + ";",
+            "            NanoValue *target = stack[--sp];",
+            "            if (!target || target->tag != NANO_FUNCTION || !target->as.function) nano_fail(\"call_value target is not Function\");",
+            "            stack[sp++] = ((NanoFn)target->as.function)(call_args, " + to_text(count) + ");",
+            "        }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "print" {
+        return [
+            "        nano_any_print(stack[--sp]);",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "pop" {
+        return ["        --sp;", "        ip = ip + 1;", "        continue;"]
+    }
+
+    if op == "jump" {
+        target = labels[parts[1]]
+        return ["        ip = " + to_text(target) + ";", "        continue;"]
+    }
+
+    if op == "jump_if_false" {
+        target = labels[parts[1]]
+        return [
+            "        if (!nano_any_truthy(stack[--sp])) { ip = " + to_text(target) + "; continue; }",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "iter_init" {
+        return [
+            "        if (itsp >= 64) nano_fail(\"iterator stack overflow\");",
+            "        iters[itsp].value = stack[--sp];",
+            "        iters[itsp].index = 0;",
+            "        ++itsp;",
+            "        ip = ip + 1;",
+            "        continue;"
+        ]
+    }
+
+    if op == "iter_next" {
+        target = labels[parts[2]]
+        return [
+            "        if (itsp <= 0) nano_fail(\"IterNext without IterInit\");",
+            "        if (iters[itsp-1].index < (size_t)nano_any_len(iters[itsp-1].value)) {",
+            "            NanoValue *idx = nano_box_number((double)iters[itsp-1].index++);",
+            "            nano_env_set(&env, \"" + escape_c(parts[1]) + "\", nano_any_index(iters[itsp-1].value, idx));",
+            "            ip = ip + 1;",
+            "        } else {",
+            "            --itsp;",
+            "            ip = " + to_text(target) + ";",
+            "        }",
+            "        continue;"
+        ]
+    }
+
+    if op == "return" {
+        return [
+            "        return sp > 0 ? stack[--sp] : nano_box_null();"
+        ]
+    }
+
+    if op == "use" {
+        return ["        nano_fail(\"self-host C backend: use is not available in generated standalone code\");"]
+    }
+
+    return ["        nano_fail(\"self-host C backend: unsupported IR instruction\");"]
+}
+
+function parse_functions(lines) {
+    functions = []
+    current = []
+    current_name = ""
+    active = false
+    i = 0
+    while i < len(lines) {
+        line = trim(lines[i])
+        if starts_with(line, "function ") {
+            active = true
+            current = []
+            current_name = trim(substring(line, 9, len(line)))
+        } else if line == "end_function" {
+            if active {
+                functions = append(functions, {name: current_name, code: current})
+                active = false
+                current = []
+                current_name = ""
+            }
+        } else if active {
+            current = append(current, line)
+        }
+        i = i + 1
+    }
+    return functions
+}
+
+function emit_function(function) {
+    code = function.code
+    labels = label_targets(code)
+    lines = [
+        "static NanoValue *nano_fn_" + symbol(function.name) + "(NanoValue **args, int argc) {",
+        "    NanoEnv env = {0};",
+        "    NanoValue *stack[1024];",
+        "    int sp = 0;",
+        "    typedef struct { NanoValue *value; size_t index; } NanoIter;",
+        "    NanoIter iters[64];",
+        "    int itsp = 0;"
+    ]
+
+    i = 0
+    while i < len(function.params) {
+        lines = append(lines, "    if (argc > " + to_text(i) + ") nano_env_set(&env, \"" + escape_c(function.params[i]) + "\", args[" + to_text(i) + "]);")
+        i = i + 1
+    }
+
+    lines = append(lines, "    size_t ip = 0;")
+    lines = append(lines, "    while (ip < " + to_text(len(code)) + ") {")
+    lines = append(lines, "        switch (ip) {")
+    i = 0
+    while i < len(code) {
+        parts = words(code[i])
+        if len(parts) > 0 && parts[0] == "const" && len(parts) >= 2 {
+            if parts[1] != "null" && parts[1] != "true" && parts[1] != "false" && !starts_with(parts[1], "\"") {
+                # numbers are emitted as-is
+            }
+        }
+        lines = append(lines, "        case " + to_text(i) + ":")
+        case_lines = emit_case(i, code[i], labels)
+        for line in case_lines {
+            lines = append(lines, line)
+        }
+        i = i + 1
+    }
+    lines = append(lines, "        default: return nano_box_null();", "        }", "    }", "    return nano_box_null();", "}", "")
+    return lines
+}
+
+function emit_dispatch(functions) {
+    lines = [
+        "static NanoValue *nano_call_dynamic(const char *name, NanoValue **args, int argc) {"
+    ]
+    for function in functions {
+        lines = append(lines, "    if (strcmp(name, \"" + escape_c(function.name) + "\") == 0) return nano_fn_" + symbol(function.name) + "(args, argc);")
+    }
+    lines = append(lines, "    return nano_call_builtin(name, args, argc);", "}", "")
+    return lines
+}
+
+function emit_builtin() {
+    return [
+        "static NanoValue *nano_call_builtin(const char *name, NanoValue **args, int argc) {",
+        "    if (strcmp(name, \"print\") == 0) { if (argc != 1) nano_fail(\"print requires one argument\"); nano_any_print(args[0]); return nano_box_null(); }",
+        "    if (strcmp(name, \"len\") == 0) { if (argc != 1) nano_fail(\"len requires one argument\"); return nano_box_number(nano_any_len(args[0])); }",
+        "    if (strcmp(name, \"to_text\") == 0) { if (argc != 1) nano_fail(\"to_text requires one argument\"); char *s = nano_to_string(args[0]); NanoValue *v = nano_box_text(s); free(s); return v; }",
+        "    if (strcmp(name, \"abs\") == 0) return nano_box_number(fabs(args[0]->as.number));",
+        "    if (strcmp(name, \"sqrt\") == 0) return nano_box_number(sqrt(args[0]->as.number));",
+        "    if (strcmp(name, \"floor\") == 0) return nano_box_number(floor(args[0]->as.number));",
+        "    if (strcmp(name, \"ceil\") == 0) return nano_box_number(ceil(args[0]->as.number));",
+        "    if (strcmp(name, \"round\") == 0) return nano_box_number(round(args[0]->as.number));",
+        "    if (strcmp(name, \"sin\") == 0) return nano_box_number(sin(args[0]->as.number));",
+        "    if (strcmp(name, \"cos\") == 0) return nano_box_number(cos(args[0]->as.number));",
+        "    if (strcmp(name, \"tan\") == 0) return nano_box_number(tan(args[0]->as.number));",
+        "    if (strcmp(name, \"exp\") == 0) return nano_box_number(exp(args[0]->as.number));",
+        "    if (strcmp(name, \"log\") == 0) return nano_box_number(log(args[0]->as.number));",
+        "    if (strcmp(name, \"pow\") == 0) return nano_box_number(pow(args[0]->as.number, args[1]->as.number));",
+        "    if (strcmp(name, \"min\") == 0) return nano_box_number(fmin(args[0]->as.number, args[1]->as.number));",
+        "    if (strcmp(name, \"max\") == 0) return nano_box_number(fmax(args[0]->as.number, args[1]->as.number));",
+        "    if (strcmp(name, \"assert\") == 0) { if (argc < 1) nano_fail(\"assert requires a condition\"); if (!nano_any_truthy(args[0])) nano_fail(argc > 1 ? nano_to_string(args[1]) : \"assertion failed\"); return nano_box_null(); }",
+        "    nano_fail(\"self-host generated C: builtin is not available\");",
+        "    return nano_box_null();",
+        "}"
+    ]
+}
+
+function emit_c(ir_text, runtime_text) {
+    lines = split(ir_text, "\n")
+    functions = parse_functions(lines)
+    if len(functions) == 0 {
+        return {ok: false, error: "IR não contém funções"}
+    }
+
+    out = [
+        "#include <stddef.h>",
+        "#include <stdint.h>",
+        "#include <stdio.h>",
+        "#include <stdlib.h>",
+        "#include <string.h>",
+        "#include <math.h>",
+        runtime_text,
+        "",
+        "typedef NanoValue *(*NanoFn)(NanoValue **, int);",
+        "typedef struct { const char *name; NanoValue *value; } NanoEnvSlot;",
+        "typedef struct { NanoEnvSlot slots[256]; int len; } NanoEnv;",
+        "",
+        "static NanoValue *nano_env_get(NanoEnv *env, const char *name) {",
+        "    for (int i = 0; i < env->len; ++i) if (strcmp(env->slots[i].name, name) == 0) return nano_clone(env->slots[i].value);",
+        "    return nano_box_null();",
+        "}",
+        "static void nano_env_set(NanoEnv *env, const char *name, NanoValue *value) {",
+        "    for (int i = 0; i < env->len; ++i) if (strcmp(env->slots[i].name, name) == 0) { env->slots[i].value = nano_clone(value); return; }",
+        "    if (env->len >= 256) nano_fail(\"too many local variables\");",
+        "    env->slots[env->len].name = name;",
+        "    env->slots[env->len].value = nano_clone(value);",
+        "    env->len++;",
+        "}",
+        ""
+    ]
+
+    for function in functions {
+        lines = append(lines, "static NanoValue *nano_fn_" + symbol(function.name) + "(NanoValue **args, int argc);")
+    }
+    for line in lines {
+        out = append(out, line)
+    }
+
+    builtin = emit_builtin()
+    for line in builtin {
+        out = append(out, line)
+    }
+
+    dispatch = emit_dispatch(functions)
+    for line in dispatch {
+        out = append(out, line)
+    }
+
+    for function in functions {
+        generated = emit_function(function)
+        for line in generated {
+            out = append(out, line)
+        }
+    }
+
+    out = append(out,
+        "int main(void) {",
+        "    nano_fn__main(NULL, 0);",
+        "    return 0;",
+        "}",
+        ""
+    )
+    return {ok: true, c: join(out, "\n")}
+}
+
+function main() {
+    ir_path = std.env.get("NANO_SELFHOST_IR")
+    runtime_path = std.env.get("NANO_SELFHOST_RUNTIME")
+    output_path = std.env.get("NANO_SELFHOST_C")
+
+    if ir_path == null || runtime_path == null || output_path == null {
+        print "c_backend: configure NANO_SELFHOST_IR, NANO_SELFHOST_RUNTIME and NANO_SELFHOST_C"
+        return
+    }
+
+    ir_text = fs_read_text(ir_path)
+    runtime_text = fs_read_text(runtime_path)
+    result = emit_c(ir_text, runtime_text)
+    if result.ok {
+        fs_write_text(output_path, result.c)
+        print "self-host C OK"
+    } else {
+        print "self-host C ERROR: " + result.error
+    }
+}
