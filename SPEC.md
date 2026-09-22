@@ -1,4 +1,4 @@
-# Nano 0.1 — Especificação inicial
+# Nano 0.2 — Especificação inicial
 
 ## 1. Arquivos
 
@@ -92,7 +92,37 @@ function add(a, b) {
 print add(2, 3)
 ```
 
-## 3. Aplicações e interface
+## 3. Coleções e objetos
+
+Listas:
+
+```nano
+numbers = [10, 20, 30]
+print numbers[0]
+print len(numbers)
+```
+
+Objetos:
+
+```nano
+user = {
+    name: "André",
+    age: 25
+}
+
+print user.name
+print user["age"]
+```
+
+Listas podem ser combinadas:
+
+```nano
+all = [1, 2] + [3, 4]
+```
+
+O mesmo valor de objeto serve como estrutura de dados simples. Não existe uma palavra-chave obrigatória como `class` para criar um objeto.
+
+## 4. Aplicações e interface
 
 A interface não define o arquivo principal.
 
@@ -108,7 +138,7 @@ model.nano    -> lógica/IA
 
 A sintaxe específica de interface será definida quando o núcleo da linguagem estiver estável.
 
-## 4. Tipos
+## 5. Tipos
 
 Nano 0.1 começa com:
 
@@ -119,7 +149,7 @@ Nano 0.1 começa com:
 
 A linguagem favorece inferência automática.
 
-## 5. Execução
+## 6. Execução
 
 Nano 0.1 possui um runtime próprio.
 
@@ -143,7 +173,7 @@ Nano IR
     └── Native NPU
 ```
 
-## 6. Self-host
+## 7. Self-host
 
 O bootstrap inicial pode ser escrito em Rust apenas para dar nascimento à ferramentachain.
 
@@ -161,7 +191,7 @@ Nano compila Nano
 
 Quando o compilador Nano conseguir compilar o seu próprio código-fonte usando uma versão anterior funcional do compilador, teremos atingido o núcleo do self-host.
 
-## 7. Regra de simplicidade
+## 8. Regra de simplicidade
 
 A sintaxe deve continuar pequena mesmo quando a plataforma ganhar capacidades avançadas.
 
