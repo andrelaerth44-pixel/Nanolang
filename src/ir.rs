@@ -883,6 +883,9 @@ impl IrRuntime {
             "std.ui.set_title" => "ui_set_title",
             "std.ui.close" => "ui_close",
             "std.ui.poll_event" => "ui_poll_event",
+            "std.ui.clear" => "ui_clear",
+            "std.ui.rect" => "ui_rect",
+            "std.ui.button" => "ui_button",
             "std.async.channel" => "channel",
             "std.async.send" => "send",
             "std.async.recv" => "recv",
@@ -1500,6 +1503,56 @@ impl IrRuntime {
             let window = ui::spawn(title, width, height)?;
             self.ui_windows.insert(handle, window);
             return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "ui_clear" {
+            if args.len() != 4 { return Err("Nano: ui.clear() recebe r,g,b,a".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let color = [number_arg(&args[1], "r")? as f32, number_arg(&args[2], "g")? as f32, number_arg(&args[3], "b")? as f32];
+            let window = self.ui_windows.get(&handle).ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            window.command.send(ui::UiCommand::Clear([color[0], color[1], color[2], 1.0]))
+                .map_err(|_| "Nano: thread da UI não está disponível".to_string())?;
+            return Ok(Value::Null);
+        }
+        if name == "ui_rect" {
+            if args.len() != 8 { return Err("Nano: ui.rect() recebe handle,x,y,width,height,r,g,b".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let rect = ui::UiCommand::Rect {
+                x: number_arg(&args[1], "x")? as f32,
+                y: number_arg(&args[2], "y")? as f32,
+                width: number_arg(&args[3], "width")? as f32,
+                height: number_arg(&args[4], "height")? as f32,
+                color: [
+                    number_arg(&args[5], "r")? as f32,
+                    number_arg(&args[6], "g")? as f32,
+                    number_arg(&args[7], "b")? as f32,
+                    1.0,
+                ],
+            };
+            let window = self.ui_windows.get(&handle).ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            window.command.send(rect).map_err(|_| "Nano: thread da UI não está disponível".to_string())?;
+            return Ok(Value::Null);
+        }
+        if name == "ui_button" {
+            if args.len() != 9 { return Err("Nano: ui.button() recebe handle,id,x,y,width,height,r,g,b".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let id = text_arg(&args[1], "id")?;
+            let button = ui::UiCommand::Button {
+                id,
+                x: number_arg(&args[2], "x")? as f32,
+                y: number_arg(&args[3], "y")? as f32,
+                width: number_arg(&args[4], "width")? as f32,
+                height: number_arg(&args[5], "height")? as f32,
+                color: [
+                    number_arg(&args[6], "r")? as f32,
+                    number_arg(&args[7], "g")? as f32,
+                    number_arg(&args[8], "b")? as f32,
+                    1.0,
+                ],
+            };
+            let window = self.ui_windows.get(&handle).ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            window.command.send(button).map_err(|_| "Nano: thread da UI não está disponível".to_string())?;
+            return Ok(Value::Null);
         }
 
         if name == "ui_set_title" {
