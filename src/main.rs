@@ -1676,7 +1676,7 @@ fn parse_cli(
             Some("verify") => CliCommand::PackageVerify,
             _ => return Err("uso: nano package init|add|remove|lock|verify [argumentos]".into()),
         },
-        _ => return Err("uso: nano run|check|lint|test|fmt|lsp|repl|debug|new|package init|lock|verify|build [opções] [arquivo]".into()),
+        _ => return Err("uso: nano run|check|lint|test|fmt|lsp|repl|debug [--dap]|new|package init|add|remove|lock|verify|build [--selfhost] [opções] [arquivo]".into()),
     };
 
     let mut path = None;
