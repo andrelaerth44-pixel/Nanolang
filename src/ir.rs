@@ -354,7 +354,7 @@ pub(crate) struct IrRuntime {
     tcp_streams: HashMap<u64, TcpStream>,
     tcp_listeners: HashMap<u64, TcpListener>,
     children: HashMap<u64, Child>,
-    tasks: HashMap<u64, JoinHandle<Result<i32, String>>>,
+    tasks: HashMap<u64, JoinHandle<Result<Value, String>>>,
     ui_windows: HashMap<u64, ui::UiHandle>,
     channels: HashMap<u64, (Sender<Value>, Receiver<Value>)>,
 }
@@ -695,21 +695,64 @@ impl IrRuntime {
                 Command::new(&command)
                     .args(argv)
                     .status()
-                    .map(|status| status.code().unwrap_or(-1))
+                    .map(|status| Value::Number(status.code().unwrap_or(-1) as f64))
                     .map_err(|e| format!("Nano: thread_spawn('{command}'): {e}"))
             });
             self.tasks.insert(handle, join);
             return Ok(Value::Number(handle as f64));
         }
 
-        if name == "thread_join" {
-            if args.len() != 1 { return Err("Nano: thread_join() recebe handle".into()); }
+        if name == "task_spawn" {
+            if args.len() != 2 { return Err("Nano: task_spawn() recebe nome da função e lista de argumentos".into()); }
+            let function_name = text_arg(&args[0], "função")?;
+            let argv = match &args[1] {
+                Value::List(values) => values.clone(),
+                _ => return Err("Nano: task_spawn() requer List de argumentos".into()),
+            };
+            fn is_sendable(value: &Value) -> bool {
+                match value {
+                    Value::Number(_) | Value::Text(_) | Value::Boolean(_) | Value::Null => true,
+                    Value::List(items) => items.iter().all(is_sendable),
+                    Value::Object(items) => items.values().all(is_sendable),
+                    Value::Tensor(_) => false,
+                }
+            }
+            if !argv.iter().all(is_sendable) {
+                return Err("Nano: task_spawn() não aceita Tensor ou valores não thread-safe".into());
+            }
+            let function = self.functions.get(&function_name)
+                .cloned()
+                .ok_or_else(|| format!("Nano: função '{function_name}' não definida"))?;
+            if function.params.len() != argv.len() {
+                return Err(format!(
+                    "Nano: task_spawn('{function_name}') esperava {} argumentos",
+                    function.params.len()
+                ));
+            }
+            let backend_kind = self.backend.kind();
+            let dtype = self.dtype;
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            let join = thread::spawn(move || {
+                let mut runtime = IrRuntime::with_backend_and_dtype(backend_kind, dtype)?;
+                runtime.functions.insert(function_name.clone(), function.clone());
+                for (param, value) in function.params.iter().zip(argv) {
+                    runtime.vars.insert(param.clone(), value);
+                }
+                runtime.execute_code(&function.code)
+                    .map(|value| value.unwrap_or(Value::Null))
+            });
+            self.tasks.insert(handle, join);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "thread_join" || name == "task_join" {
+            if args.len() != 1 { return Err(format!("Nano: {name}() recebe handle")); }
             let handle = integer_arg(&args[0], "handle")?;
             let task = self.tasks.remove(&handle)
                 .ok_or_else(|| format!("Nano: tarefa {handle} não encontrada"))?;
-            let status = task.join()
-                .map_err(|_| format!("Nano: thread_join(): tarefa {handle} entrou em pânico"))??;
-            return Ok(Value::Number(status as f64));
+            task.join()
+                .map_err(|_| format!("Nano: {name}(): tarefa {handle} entrou em pânico"))?
         }
 
         if name == "process_wait" {
