@@ -156,6 +156,10 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
                 "definitionProvider": true,
                 "referencesProvider": true,
                 "renameProvider": true,
+                "signatureHelpProvider": {
+                    "triggerCharacters": ["(", ","]
+                },
+                "documentSymbolProvider": true,
                 "documentFormattingProvider": true,
                 "codeActionProvider": true
             },
@@ -174,6 +178,8 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
         "textDocument/definition" => definition(server, request),
         "textDocument/references" => references(server, request),
         "textDocument/rename" => rename(server, request),
+        "textDocument/signatureHelp" => signature_help(server, request),
+        "textDocument/documentSymbol" => document_symbols(server, request),
         "textDocument/formatting" => formatting(server, request),
         "textDocument/codeAction" => code_actions(server, request),
         "textDocument/diagnostic" => document_diagnostic(server, request),
@@ -183,6 +189,58 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
 
 fn completion(server: &Server, request: &Value) -> Value {
     let text = document_text(server, request);
+    let prefix = completion_prefix(&text, request);
+
+    let mut items = Vec::new();
+    if let Some(namespace) = prefix.strip_suffix('.') {
+        let entries = match namespace {
+            "std.fs" => vec![
+                ("read_text", "lê um arquivo de texto"),
+                ("write_text", "escreve um arquivo de texto"),
+                ("append_text", "anexa texto"),
+                ("exists", "verifica se o caminho existe"),
+                ("list", "lista um diretório"),
+                ("mkdir", "cria diretórios"),
+                ("remove", "remove arquivo ou diretório"),
+            ],
+            "std.net" => vec![
+                ("tcp_connect", "abre uma conexão TCP"),
+                ("tcp_listen", "cria um listener TCP"),
+                ("tcp_accept", "aceita uma conexão"),
+                ("tcp_send", "envia texto"),
+                ("tcp_recv", "recebe texto"),
+                ("tcp_close", "fecha um socket"),
+            ],
+            "std.async" => vec![
+                ("channel", "cria um canal"),
+                ("send", "envia um valor ao canal"),
+                ("recv", "recebe um valor do canal"),
+                ("close_channel", "fecha o canal"),
+            ],
+            "std.time" => vec![
+                ("now_ms", "tempo Unix em milissegundos"),
+                ("sleep_ms", "pausa a execução"),
+            ],
+            "std.ui" => vec![
+                ("window", "cria uma janela"),
+                ("set_title", "define o título"),
+                ("close", "fecha a janela"),
+                ("poll_event", "obtém o próximo evento"),
+            ],
+            _ => Vec::new(),
+        };
+
+        for (label, detail) in entries {
+            items.push(json!({
+                "label": label,
+                "kind": 3,
+                "detail": detail,
+                "insertText": label
+            }));
+        }
+        return json!({ "isIncomplete": false, "items": items });
+    }
+
     let words = [
         ("function", 14, "declara uma função"),
         ("if", 14, "condição"),
@@ -191,27 +249,28 @@ fn completion(server: &Server, request: &Value) -> Value {
         ("for", 14, "laço for"),
         ("in", 14, "iterador"),
         ("return", 14, "retorna de uma função"),
-        ("true", 14, "booleano verdadeiro"),
-        ("false", 14, "booleano falso"),
+        ("true", 21, "booleano verdadeiro"),
+        ("false", 21, "booleano falso"),
         ("use", 14, "carrega um módulo"),
         ("print", 3, "imprime um valor"),
-        ("len", 3, "tamanho de texto, lista, objeto ou tensor"),
-        ("range", 3, "gera números de 0 até limite"),
+        ("assert", 3, "falha quando a condição é falsa"),
+        ("len", 3, "tamanho"),
+        ("range", 3, "gera números"),
         ("tensor", 3, "cria um tensor"),
-        ("parameter", 3, "cria um parâmetro treinável"),
-        ("zeros", 3, "cria um tensor preenchido com zero"),
-        ("shape", 3, "retorna o shape do tensor"),
-        ("matmul", 3, "multiplicação de matrizes"),
+        ("parameter", 3, "cria um parâmetro"),
+        ("zeros", 3, "cria tensor zero"),
+        ("shape", 3, "shape do tensor"),
+        ("matmul", 3, "multiplicação matricial"),
         ("sum", 3, "redução soma"),
         ("mean", 3, "redução média"),
-        ("grad", 3, "gradiente automático"),
-        ("step", 3, "atualização SGD"),
-        ("adam", 3, "atualização Adam"),
+        ("grad", 3, "gradiente"),
+        ("step", 3, "SGD"),
+        ("adam", 3, "Adam"),
         ("cast", 3, "conversão de dtype"),
-        ("dtype", 3, "dtype do tensor"),
-        ("device", 3, "dispositivo do tensor"),
-        ("backend", 3, "backend ativo"),
-        ("memory_bytes", 3, "memória do tensor"),
+        ("dtype", 3, "dtype"),
+        ("device", 3, "dispositivo"),
+        ("backend", 3, "backend"),
+        ("memory_bytes", 3, "memória"),
         ("abs", 3, "valor absoluto"),
         ("sqrt", 3, "raiz quadrada"),
         ("floor", 3, "arredonda para baixo"),
@@ -221,38 +280,33 @@ fn completion(server: &Server, request: &Value) -> Value {
         ("cos", 3, "cosseno"),
         ("tan", 3, "tangente"),
         ("exp", 3, "exponencial"),
-        ("log", 3, "logaritmo natural"),
+        ("log", 3, "logaritmo"),
         ("pow", 3, "potência"),
         ("min", 3, "mínimo"),
         ("max", 3, "máximo"),
-        ("to_text", 3, "converte um valor para Text"),
-        ("to_number", 3, "converte Text para Number"),
-        ("upper", 3, "converte texto para maiúsculas"),
-        ("lower", 3, "converte texto para minúsculas"),
-        ("trim", 3, "remove espaços nas extremidades"),
+        ("to_text", 3, "converte para texto"),
+        ("to_number", 3, "converte para número"),
+        ("upper", 3, "maiúsculas"),
+        ("lower", 3, "minúsculas"),
+        ("trim", 3, "remove espaços"),
         ("contains", 3, "verifica substring"),
-        ("starts_with", 3, "verifica prefixo"),
-        ("ends_with", 3, "verifica sufixo"),
         ("replace", 3, "substitui texto"),
-        ("substring", 3, "recorta uma faixa de texto"),
-        ("char_at", 3, "obtém um caractere por índice"),
-        ("split", 3, "divide texto em uma lista"),
-        ("join", 3, "junta uma lista em texto"),
-        ("append", 3, "cria uma lista com um item no final"),
-        ("thread_spawn", 3, "executa um processo em thread nativa"),
-        ("thread_join", 3, "aguarda uma thread"),
-        ("ui_window", 3, "cria uma janela desktop"),
-        ("ui_set_title", 3, "altera o título da janela"),
-        ("ui_close", 3, "fecha uma janela"),
-        ("ui_poll_event", 3, "obtém o próximo evento de UI"),
-        ("assert", 3, "falha o programa quando a condição é falsa"),
-        ("channel", 3, "cria um canal de comunicação"),
-        ("send", 3, "envia um valor para um canal"),
-        ("recv", 3, "recebe um valor de um canal"),
-        ("close_channel", 3, "fecha um canal"),
+        ("substring", 3, "recorta texto"),
+        ("char_at", 3, "caractere por índice"),
+        ("split", 3, "divide texto"),
+        ("join", 3, "junta lista"),
+        ("append", 3, "adiciona item"),
+        ("channel", 3, "canal"),
+        ("send", 3, "envia canal"),
+        ("recv", 3, "recebe canal"),
+        ("thread_spawn", 3, "processo em thread"),
+        ("thread_join", 3, "aguarda thread"),
+        ("ui_window", 3, "janela"),
+        ("ui_set_title", 3, "título"),
+        ("ui_close", 3, "fecha janela"),
+        ("ui_poll_event", 3, "evento da UI"),
     ];
 
-    let mut items = Vec::new();
     for (label, kind, detail) in words {
         items.push(json!({
             "label": label,
@@ -262,30 +316,41 @@ fn completion(server: &Server, request: &Value) -> Value {
         }));
     }
 
-    let mut seen_functions = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("function ") {
             if let Some(name) = rest.split(['(', ' ', '\t']).next() {
                 if !name.is_empty() {
-                    seen_functions.push(name.to_string());
+                    items.push(json!({
+                        "label": name,
+                        "kind": 3,
+                        "detail": "função do arquivo",
+                        "insertText": name
+                    }));
                 }
             }
         }
     }
-    for name in seen_functions {
-        items.push(json!({
-            "label": name,
-            "kind": 3,
-            "detail": "função do arquivo",
-            "insertText": name
-        }));
-    }
 
-    json!({
-        "isIncomplete": false,
-        "items": items
-    })
+    json!({ "isIncomplete": false, "items": items })
+}
+
+fn completion_prefix(text: &str, request: &Value) -> String {
+    let line = request.pointer("/params/position/line").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let character = request.pointer("/params/position/character").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let row = text.lines().nth(line).unwrap_or("");
+    let chars: Vec<char> = row.chars().collect();
+    let end = character.min(chars.len());
+    let mut start = end;
+    while start > 0 {
+        let c = chars[start - 1];
+        if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    chars[start..end].iter().collect()
 }
 
 fn hover(server: &Server, request: &Value) -> Value {
@@ -419,6 +484,79 @@ fn rename(server: &Server, request: &Value) -> Value {
         }
     })
 }
+
+fn signature_help(server: &Server, request: &Value) -> Value {
+    let text = document_text(server, request);
+    let line = request.pointer("/params/position/line").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let character = request.pointer("/params/position/character").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let row = text.lines().nth(line).unwrap_or("");
+    let prefix: String = row.chars().take(character.min(row.chars().count())).collect();
+    let name = prefix.rsplit_once('(').map(|(left, _)| {
+        left.split_whitespace().last().unwrap_or("").trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+    }).unwrap_or("");
+
+    let signature = match name {
+        "len" => Some("len(value)"),
+        "range" => Some("range(limit)"),
+        "tensor" => Some("tensor(data, shape)"),
+        "matmul" => Some("matmul(left, right)"),
+        "grad" => Some("grad(loss, parameter)"),
+        "step" => Some("step(parameter, gradient, learning_rate)"),
+        "adam" => Some("adam(parameter, gradient, learning_rate)"),
+        "pow" => Some("pow(base, exponent)"),
+        "substring" => Some("substring(text, start, end)"),
+        "replace" => Some("replace(text, old, new)"),
+        "split" => Some("split(text, separator)"),
+        "join" => Some("join(list, separator)"),
+        "ui_window" => Some("ui_window(title, width, height)"),
+        "thread_spawn" => Some("thread_spawn(command, args)"),
+        "net_tcp_connect" => Some("net_tcp_connect(host, port)"),
+        _ => None,
+    };
+
+    match signature {
+        Some(label) => json!({
+            "signatures": [{
+                "label": label,
+                "documentation": { "kind": "markdown", "value": "Assinatura da API Nano." }
+            }],
+            "activeSignature": 0,
+            "activeParameter": 0
+        }),
+        None => Value::Null,
+    }
+}
+
+fn document_symbols(server: &Server, request: &Value) -> Value {
+    let text = document_text(server, request);
+    let mut symbols = Vec::new();
+
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("function ") {
+            if let Some(name) = rest.split(['(', ' ', '\t']).next() {
+                if !name.is_empty() {
+                    let start = line.find(name).unwrap_or(0);
+                    symbols.push(json!({
+                        "name": name,
+                        "kind": 12,
+                        "range": {
+                            "start": { "line": line_no, "character": start },
+                            "end": { "line": line_no, "character": start + name.chars().count() }
+                        },
+                        "selectionRange": {
+                            "start": { "line": line_no, "character": start },
+                            "end": { "line": line_no, "character": start + name.chars().count() }
+                        }
+                    }));
+                }
+            }
+        }
+    }
+
+    Value::Array(symbols)
+}
+
 
 fn formatting(server: &Server, request: &Value) -> Value {
     let text = document_text(server, request);
