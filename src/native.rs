@@ -388,22 +388,50 @@ impl NativeModule {
                 IrInst::Unary(op) => {
                     let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
-                    self.load_stack(slot, "%xmm0");
+                    let value_kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match op {
                         crate::UnaryOp::Neg => {
+                            self.load_stack(slot, "%xmm0");
                             self.text.push_str("    xorpd %xmm1, %xmm1\n    subsd %xmm0, %xmm1\n    movsd %xmm1, %xmm0\n");
+                            self.text.push_str(&format!(
+                                "    movsd %xmm0, {}(%rbp)\n",
+                                stack_offset(slot)
+                            ));
                         }
                         crate::UnaryOp::Not => {
-                            let zero = self.add_float(0.0);
+                            match value_kind {
+                                Kind::Text => {
+                                    self.text.push_str(&format!(
+                                        "    movq {}(%rbp), %rax\n    cmpb $0, (%rax)\n    sete %al\n    movzbl %al, %eax\n",
+                                        stack_offset(slot)
+                                    ));
+                                }
+                                Kind::Function => {
+                                    self.text.push_str(&format!(
+                                        "    movq {}(%rbp), %rax\n    cmpq $0, %rax\n    sete %al\n    movzbl %al, %eax\n",
+                                        stack_offset(slot)
+                                    ));
+                                }
+                                Kind::Null => {
+                                    self.text.push_str(&format!(
+                                        "    cmpq $0, {}(%rbp)\n    sete %al\n    movzbl %al, %eax\n",
+                                        stack_offset(slot)
+                                    ));
+                                }
+                                _ => {
+                                    self.load_stack(slot, "%xmm0");
+                                    let zero = self.add_float(0.0);
+                                    self.text.push_str(&format!(
+                                        "    ucomisd {zero}(%rip), %xmm0\n    sete %al\n    movzbl %al, %eax\n",
+                                    ));
+                                }
+                            }
                             self.text.push_str(&format!(
-                                "    ucomisd {zero}(%rip), %xmm0\n    sete %al\n    movzbl %al, %eax\n    cvtsi2sd %eax, %xmm0\n"
+                                "    cvtsi2sd %eax, %xmm0\n    movsd %xmm0, {}(%rbp)\n",
+                                stack_offset(slot)
                             ));
                         }
                     }
-                    self.text.push_str(&format!(
-                        "    movsd %xmm0, {}(%rbp)\n",
-                        stack_offset(slot)
-                    ));
                 }
                 IrInst::FusedMulAdd => {
                     let bias = depth.checked_sub(1)
@@ -529,7 +557,16 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
                     let condition_kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match condition_kind {
-                        Kind::Text | Kind::Function | Kind::Null => {
+                        Kind::Text => {
+                            self.text.push_str(&format!(
+                                "    movq {}(%rbp), %rax\n    cmpb $0, (%rax)\n    je {}\n",
+                                stack_offset(slot),
+                                labels.get(target)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!(".L{symbol}_end"))
+                            ));
+                        }
+                        Kind::Function | Kind::Null => {
                             self.text.push_str(&format!(
                                 "    cmpq $0, {}(%rbp)\n    je {}\n",
                                 stack_offset(slot),
@@ -837,7 +874,7 @@ fn analyze_stack(
             IrInst::JumpIfFalse(_) => {
                 let condition = next.pop().ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
                 if !matches!(condition, Kind::Unknown | Kind::Number | Kind::Boolean | Kind::Text | Kind::Function | Kind::Null) {
-                    return Err(format!("Nano native: condição precisa ser Number ou Boolean em '{name}'"));
+                    return Err(format!("Nano native: condição usa um tipo não suportado em '{name}'"));
                 }
             }
             IrInst::Jump(_) => {}
