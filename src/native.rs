@@ -494,8 +494,8 @@ fn analyze_stack(
             }
             IrInst::Store(var) => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function) {
-                    return Err(format!("Nano native: variável '{var}' precisa ser Number ou Boolean"));
+                if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function | Kind::Text) {
+                    return Err(format!("Nano native: variável '{var}' tem um tipo que o backend não suporta"));
                 }
                 match local_kinds.get(var).copied() {
                     None => { local_kinds.insert(var.clone(), value); }
@@ -609,7 +609,7 @@ fn analyze_stack(
             IrInst::Return => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
                 if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function) {
-                    return Err(format!("Nano native: retorno de '{name}' deve ser Number, Boolean ou Function"));
+                    return Err(format!("Nano native: retorno de '{name}' tem um tipo que o backend não suporta"));
                 }
                 match return_kind {
                     None => return_kind = Some(value),
