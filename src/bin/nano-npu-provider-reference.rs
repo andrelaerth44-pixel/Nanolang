@@ -14,7 +14,7 @@ fn main() {
         let op = request.get("op").and_then(|v| v.as_str()).unwrap_or("");
         let response = match op {
             "handshake" => serde_json::json!({"ok": true, "abi": 1, "provider": "nano-reference-npu",
-                "ops": ["matmul","elementwise","fused_mul_add","reduce","upload","read","release","transfer"]}),
+                "ops": ["matmul","matmul_transposed","elementwise","fused_mul_add","reduce","upload","read","release","transfer"]}),
             "transfer" => {
                 let data = floats(&request["data"]);
                 serde_json::json!({"ok": true, "data": data})
@@ -59,6 +59,38 @@ fn main() {
                 let c = floats(&request["bias"]);
                 let data = a.into_iter().zip(b).zip(c).map(|((x, y), z)| x * y + z).collect::<Vec<_>>();
                 serde_json::json!({"ok": true, "data": data})
+            }
+            "matmul_transposed" => {
+                let a = floats(&request["left"]);
+                let b = floats(&request["right"]);
+                let ashape = dims(&request["left_shape"]);
+                let bshape = dims(&request["right_shape"]);
+                let at = request.get("left_transpose").and_then(|v| v.as_bool()).unwrap_or(false);
+                let bt = request.get("right_transpose").and_then(|v| v.as_bool()).unwrap_or(false);
+                match (ashape.as_slice(), bshape.as_slice()) {
+                    ([ar, ac], [br, bc]) => {
+                        let (m, k) = if at { (*ac, *ar) } else { (*ar, *ac) };
+                        let (k2, n) = if bt { (*bc, *br) } else { (*br, *bc) };
+                        if k != k2 || a.len() != ar * ac || b.len() != br * bc {
+                            serde_json::json!({"ok":false,"error":"matmul_transposed input shape mismatch"})
+                        } else {
+                            let mut out = vec![0.0f32; m*n];
+                            for i in 0..m {
+                                for j in 0..n {
+                                    let mut acc = 0.0;
+                                    for q in 0..k {
+                                        let ai = if at { q * *ac + i } else { i * *ac + q };
+                                        let bi = if bt { j * *bc + q } else { q * *bc + j };
+                                        acc += a[ai] * b[bi];
+                                    }
+                                    out[i*n+j] = acc;
+                                }
+                            }
+                            serde_json::json!({"ok":true,"data":out})
+                        }
+                    }
+                    _ => serde_json::json!({"ok":false,"error":"matmul_transposed requires rank-2 matrices"})
+                }
             }
             "matmul" => {
                 let a = floats(&request["left"]);
