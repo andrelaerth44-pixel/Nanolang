@@ -148,12 +148,22 @@ impl TensorBackend for NpuBackend {
         right: &[f32],
         right_shape: &[usize],
     ) -> Result<Vec<f32>, BackendError> {
-        self.response_data("matmul", json!({
+        let result = self.response_data("matmul", json!({
             "left": left,
             "left_shape": left_shape,
             "right": right,
             "right_shape": right_shape
-        }))
+        }))?;
+        if left_shape.len() == 2 && right_shape.len() == 2 && left_shape[1] == right_shape[0] {
+            let expected = left_shape[0] * right_shape[1];
+            if result.len() != expected {
+                return Err(BackendError(format!(
+                    "Nano: provider NPU devolveu {} valores para matmul com shape {:?}x{:?}; esperado {}",
+                    result.len(), left_shape, right_shape, expected
+                )));
+            }
+        }
+        Ok(result)
     }
 
     fn elementwise(
