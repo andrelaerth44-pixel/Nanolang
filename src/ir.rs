@@ -2343,9 +2343,12 @@ impl IrRuntime {
         let result = (|| {
             let source = fs::read_to_string(&canonical)
                 .map_err(|e| format!("Nano: não foi possível carregar módulo '{}': {e}", canonical.display()))?;
-            let tokens = Lexer::new(&source).lex()?;
-            let program = Parser::new(tokens).program()
-                .map_err(|e| format!("Nano: módulo '{}': {e}", canonical.display()))?;
+            let (tokens, spans) = Lexer::new(&source).lex_with_spans()?;
+            let mut parser = Parser::new_with_spans(tokens, spans);
+            let program = parser.program().map_err(|e| {
+                let (line, col) = parser.current_span_start();
+                format!("Nano: módulo '{}': {e} (linha {line}, coluna {col})", canonical.display())
+            })?;
 
             let mut semantic = Semantic::new();
             semantic.check_with_base(&program, canonical.parent())?;
