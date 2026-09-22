@@ -135,3 +135,29 @@ O compilador inicial em Rust é apenas o bootstrap. Ele não define a linguagem 
 ## Objetivo
 
 Fazer com que uma pessoa aprenda Nano rapidamente e ainda consiga construir aplicações grandes, sistemas, jogos, ferramentas de dados e IA usando a mesma linguagem.
+
+
+## Nano IR
+
+A primeira implementação de IR está em `src/ir.rs`.
+
+O fluxo agora é:
+
+```
+.nano
+ ↓
+Lexer
+ ↓
+Parser
+ ↓
+Semantic
+ ↓
+AST
+ ↓
+Nano IR
+ ↓
+IrRuntime
+```
+
+Isso cria uma fronteira real entre a linguagem e o backend. A VM atual serve como etapa inicial; a mesma representação poderá futuramente alimentar backends nativos para CPU, GPU e NPU.
+
