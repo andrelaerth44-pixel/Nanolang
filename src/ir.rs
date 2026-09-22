@@ -497,12 +497,13 @@ impl IrRuntime {
                     .map_err(|e| format!("Nano: fs_append_text('{path}'): {e}"))?;
                 file.write_all(content.as_bytes())
             };
-            result.map(|_| Value::Null).map_err(|e| format!("Nano: {name}('{path}'): {e}"))
+            return result.map(|_| Value::Null).map_err(|e| format!("Nano: {name}('{path}'): {e}"));
         }
 
         if name == "fs_exists" {
             if args.len() != 1 { return Err("Nano: fs_exists() recebe caminho".into()); }
-            let path = text_arg(&args[0], "caminho")?;\n            return Ok(Value::Boolean(Path::new(&path).exists()));
+            let path = text_arg(&args[0], "caminho")?;
+            return Ok(Value::Boolean(Path::new(&path).exists()));
         }
 
         if name == "fs_list" {
@@ -520,17 +521,17 @@ impl IrRuntime {
         if name == "fs_mkdir" {
             if args.len() != 1 { return Err("Nano: fs_mkdir() recebe diretório".into()); }
             let path = text_arg(&args[0], "diretório")?;
-            fs::create_dir_all(&path).map(|_| Value::Null)
-                .map_err(|e| format!("Nano: fs_mkdir('{path}'): {e}"))
+            return fs::create_dir_all(&path).map(|_| Value::Null)
+                .map_err(|e| format!("Nano: fs_mkdir('{path}'): {e}"));
         }
 
         if name == "fs_remove" {
             if args.len() != 1 { return Err("Nano: fs_remove() recebe caminho".into()); }
             let path = text_arg(&args[0], "caminho")?;
             let metadata = fs::metadata(&path).map_err(|e| format!("Nano: fs_remove('{path}'): {e}"))?;
-            if metadata.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) }
+            return if metadata.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) }
                 .map(|_| Value::Null)
-                .map_err(|e| format!("Nano: fs_remove('{path}'): {e}"))
+                .map_err(|e| format!("Nano: fs_remove('{path}'): {e}"));
         }
 
         if name == "env_get" {
