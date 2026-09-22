@@ -283,3 +283,34 @@ Quando o compilador Nano conseguir compilar o seu próprio código-fonte usando 
 A sintaxe deve continuar pequena mesmo quando a plataforma ganhar capacidades avançadas.
 
 O poder deve vir principalmente da composição da linguagem, biblioteca padrão, runtime, IR, compilador e ferramentas, não de centenas de palavras-chave.
+
+
+## 7. Nano IR
+
+Nano 0.4 já possui uma primeira implementação de IR.
+
+Pipeline:
+
+```
+Nano source
+    ↓
+Lexer
+    ↓
+Parser
+    ↓
+Semantic Types
+    ↓
+AST
+    ↓
+Nano IR
+    ↓
+Nano IR Runtime
+    ├── Native CPU
+    ├── Native GPU
+    └── Native NPU
+```
+
+O compilador em `src/ir.rs` transforma a AST em instruções intermediárias como `Const`, `Load`, `Store`, `Binary`, `Call`, `Jump`, `JumpIfFalse`, `Return`, `Index`, `Field` e `Print`.
+
+A VM Nano executa esse IR diretamente. A sintaxe da linguagem continua independente do backend.
+
