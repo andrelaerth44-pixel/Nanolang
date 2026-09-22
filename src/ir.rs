@@ -982,8 +982,13 @@ impl IrRuntime {
         }
 
         if name == "assert" {
-            if args.len() != 1 { return Err("Nano: assert() recebe 1 argumento".into()); }
-            if !args[0].truthy() { return Err("Nano assertion failed".into()); }
+            if args.len() != 1 && args.len() != 2 {
+                return Err("Nano: assert() recebe condição e, opcionalmente, mensagem".into());
+            }
+            if !args[0].truthy() {
+                let detail = if args.len() == 2 { format!(": {}", args[1].show()) } else { String::new() };
+                return Err(format!("Nano assertion failed{detail}"));
+            }
             return Ok(Value::Null);
         }
 
