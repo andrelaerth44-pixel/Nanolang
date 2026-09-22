@@ -328,7 +328,7 @@ impl IrRuntime {
                 Value::Text(v) => Ok(Value::Number(v.chars().count() as f64)),
                 Value::List(v) => Ok(Value::Number(v.len() as f64)),
                 Value::Object(v) => Ok(Value::Number(v.len() as f64)),
-                Value::Tensor(v) => Ok(Value::Number(v.data.len() as f64)),
+                Value::Tensor(v) => Ok(Value::Number(v.borrow().data.len() as f64)),
                 _ => Err("Nano: len() requer texto, lista, objeto ou tensor".into()),
             };
         }
@@ -366,7 +366,7 @@ impl IrRuntime {
             }
             return match &args[0] {
                 Value::Tensor(t) => Ok(Value::List(
-                    t.shape.iter().map(|v| Value::Number(*v as f64)).collect()
+                    t.borrow().shape.iter().map(|v| Value::Number(*v as f64)).collect()
                 )),
                 _ => Err("Nano: shape() requer Tensor".into()),
             };
@@ -542,12 +542,24 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
         _ => return Err("Nano: matmul() requer Tensor, Tensor".into()),
     };
 
-    if left.shape.len() != 2 || right.shape.len() != 2 {
+    let (ldata, lshape, rdata, rshape, requires_grad) = {
+        let l = left.borrow();
+        let r = right.borrow();
+        (
+            l.data.clone(),
+            l.shape.clone(),
+            r.data.clone(),
+            r.shape.clone(),
+            l.requires_grad || r.requires_grad,
+        )
+    };
+
+    if lshape.len() != 2 || rshape.len() != 2 {
         return Err("Nano: matmul() nesta versão requer tensores 2D".into());
     }
 
-    let (m, k) = (left.shape[0], left.shape[1]);
-    let (k2, n) = (right.shape[0], right.shape[1]);
+    let (m, k) = (lshape[0], lshape[1]);
+    let (k2, n) = (rshape[0], rshape[1]);
     if k != k2 {
         return Err(format!("Nano: matmul() incompatível: {}x{} com {}x{}", m, k, k2, n));
     }
@@ -557,26 +569,17 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
         for j in 0..n {
             let mut sum = 0.0_f32;
             for x in 0..k {
-                sum += left.data[i * k + x] * right.data[x * n + j];
+                sum += ldata[i * k + x] * rdata[x * n + j];
             }
             out[i * n + j] = sum;
         }
     }
 
-    let requires_grad = left.borrow().requires_grad || right.borrow().requires_grad;
-    let left_ref = std::rc::Rc::clone(match a {
-        Value::Tensor(t) => t,
-        _ => unreachable!(),
-    });
-    let right_ref = std::rc::Rc::clone(match b {
-        Value::Tensor(t) => t,
-        _ => unreachable!(),
-    });
     Ok(Value::Tensor(super::Tensor::derived(
         out,
         vec![m, n],
         requires_grad,
-        TensorOp::Matmul(left_ref, right_ref),
+        TensorOp::Matmul(std::rc::Rc::clone(left), std::rc::Rc::clone(right)),
     )?))
 }
 
