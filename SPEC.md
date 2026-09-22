@@ -1,4 +1,4 @@
-# Nano 0.5 — Especificação inicial
+# Nano 0.6 — Especificação inicial
 
 ## 1. Arquivos
 
@@ -256,9 +256,29 @@ Primitivas iniciais:
 - `zeros(shape)`
 - `shape(tensor)`
 - `matmul(a, b)`
+- `sum(tensor)`
+- `mean(tensor)`
+- `parameter(dados, shape)`
+- `grad(loss, parâmetro)`
+- `step(parâmetro, gradiente, taxa)`
 - `len(tensor)`
 
-A implementação inicial usa dados `f32` e `matmul` 2D em CPU. Isso é apenas o primeiro degrau da infraestrutura de IA; não representa ainda treinamento GPU.
+Nano 0.6 adiciona um grafo de operações de Tensor e diferenciação automática para operações iniciais.
+
+Exemplo de um passo de treino:
+
+```nano
+x = tensor([1, 2, 3, 4], [2, 2])
+w = parameter([1, 0, 0, 1], [2, 2])
+
+y = matmul(x, w)
+loss = mean(y)
+
+g = grad(loss, w)
+w = step(w, g, 0.01)
+```
+
+A implementação inicial usa dados `f32`, operações 2D em CPU e um grafo de autograd em memória. Isso já permite prototipar cálculo de gradientes, mas ainda não representa treinamento GPU de modelos de bilhões de parâmetros.
 
 
 ## 7. Execução
