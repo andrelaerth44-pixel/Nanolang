@@ -20,9 +20,22 @@ pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
     }
 
     let mut module = NativeModule::new();
-    module.compile_function("_main", &ir.code, &[])?;
+    let mut function_returns = HashMap::<String, Kind>::new();
     for (name, function) in &ir.functions {
-        module.compile_function(name, &function.code, &function.params)?;
+        let locals = initial_locals(&function.params, &function.code)?;
+        let (_, _, _, return_kind) = analyze_stack(
+            &function.code,
+            name,
+            &locals,
+            &function.params,
+            &function_returns,
+        )?;
+        function_returns.insert(name.clone(), return_kind.unwrap_or(Kind::Number));
+    }
+
+    module.compile_function("_main", &ir.code, &[], &function_returns)?;
+    for (name, function) in &ir.functions {
+        module.compile_function(name, &function.code, &function.params, &function_returns)?;
     }
 
     let assembly = module.render();
@@ -69,25 +82,12 @@ impl NativeModule {
         name: &str,
         code: &[IrInst],
         params: &[String],
+        function_returns: &HashMap<String, Kind>,
     ) -> Result<(), String> {
         let symbol = format!("nano_fn_{}", sanitize(name));
-        let mut locals = HashMap::<String, usize>::new();
-
-        for (index, param) in params.iter().enumerate() {
-            if index >= 8 {
-                return Err(format!("Nano native: função '{name}' tem mais de 8 parâmetros"));
-            }
-            locals.insert(param.clone(), index);
-        }
-
-        for inst in code {
-            if let IrInst::Store(var) = inst {
-                let index = locals.len();
-                locals.entry(var.clone()).or_insert(index);
-            }
-        }
-
-        let (entry_states, max_stack, local_kinds) = analyze_stack(code, name, &locals, params)?;
+        let locals = initial_locals(params, code)?;
+        let (entry_states, max_stack, _local_kinds, _return_kind) =
+            analyze_stack(code, name, &locals, params, function_returns)?;
 
         let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
@@ -367,12 +367,30 @@ impl NativeModule {
     }
 }
 
+fn initial_locals(params: &[String], code: &[IrInst]) -> Result<HashMap<String, usize>, String> {
+    let mut locals = HashMap::<String, usize>::new();
+    for (index, param) in params.iter().enumerate() {
+        if index >= 8 {
+            return Err(format!("Nano native: função tem mais de 8 parâmetros"));
+        }
+        locals.insert(param.clone(), index);
+    }
+    for inst in code {
+        if let IrInst::Store(var) = inst {
+            let index = locals.len();
+            locals.entry(var.clone()).or_insert(index);
+        }
+    }
+    Ok(locals)
+}
+
 fn analyze_stack(
     code: &[IrInst],
     name: &str,
     locals: &HashMap<String, usize>,
     params: &[String],
-) -> Result<(Vec<Option<Vec<Kind>>>, usize, HashMap<String, Kind>), String> {
+    function_returns: &HashMap<String, Kind>,
+) -> Result<(Vec<Option<Vec<Kind>>>, usize, HashMap<String, Kind>, Option<Kind>), String> {
     use std::collections::VecDeque;
 
     let mut states: Vec<Option<Vec<Kind>>> = vec![None; code.len()];
@@ -387,6 +405,7 @@ fn analyze_stack(
     }
 
     let mut max_stack = 0usize;
+    let mut return_kind: Option<Kind> = None;
 
     while let Some(ip) = work.pop_front() {
         let state = states[ip]
@@ -495,11 +514,11 @@ fn analyze_stack(
                 }
                 for _ in 0..*count {
                     let value = next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
-                    if value != Kind::Number {
-                        return Err(format!("Nano native: chamada '{callee}' exige argumentos Number"));
+                    if !matches!(value, Kind::Number | Kind::Boolean) {
+                        return Err(format!("Nano native: chamada '{callee}' exige argumentos escalares"));
                     }
                 }
-                next.push(Kind::Number);
+                next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
             }
             IrInst::Print => {
                 next.pop().ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
@@ -518,6 +537,16 @@ fn analyze_stack(
                 let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
                 if !matches!(value, Kind::Number | Kind::Boolean) {
                     return Err(format!("Nano native: retorno de '{name}' deve ser Number ou Boolean"));
+                }
+                match return_kind {
+                    None => return_kind = Some(value),
+                    Some(previous) if previous == value => {}
+                    Some(previous) => {
+                        return Err(format!(
+                            "Nano native: função '{name}' retorna tipos diferentes: {:?} e {:?}",
+                            previous, value
+                        ));
+                    }
                 }
             }
             IrInst::MakeList(_)
@@ -567,7 +596,7 @@ fn analyze_stack(
         }
     }
 
-    Ok((states, max_stack, local_kinds))
+    Ok((states, max_stack, local_kinds, return_kind))
 }
 
 fn sanitize(name: &str) -> String {
