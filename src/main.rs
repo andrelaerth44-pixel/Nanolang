@@ -1019,8 +1019,18 @@ impl Semantic {
                     "std.fs.list" => "fs_list",
                     "std.fs.mkdir" => "fs_mkdir",
                     "std.fs.remove" => "fs_remove",
+                    "std.fs.is_file" => "fs_is_file",
+                    "std.fs.is_dir" => "fs_is_dir",
+                    "std.fs.cwd" => "fs_cwd",
+                    "std.path.join" => "path_join",
+                    "std.path.basename" => "path_basename",
+                    "std.path.dirname" => "path_dirname",
+                    "std.path.extension" => "path_extension",
                     "std.process.spawn" => "process_spawn",
                     "std.process.wait" => "process_wait",
+                    "std.process.output" => "process_output",
+                    "std.os.cwd" => "os_cwd",
+                    "std.os.args" => "os_args",
                     "std.time.now_ms" => "time_now_ms",
                     "std.time.sleep_ms" => "time_sleep_ms",
                     "std.net.tcp_connect" => "net_tcp_connect",
@@ -1053,6 +1063,8 @@ impl Semantic {
                     "std.async.send" => "send",
                     "std.async.recv" => "recv",
                     "std.async.close_channel" => "close_channel",
+                    "std.async.sleep_ms" => "time_sleep_ms",
+                    "std.async.yield" => "thread_yield",
                     other => other,
                 };
                 if matches!(name, "ok" | "err" | "is_ok" | "unwrap" | "error") {
@@ -1118,11 +1130,29 @@ impl Semantic {
                     }
                     return Ok(Type::Null);
                 }
-                if name == "fs_exists" || name == "fs_remove" || name == "fs_list" || name == "fs_mkdir" {
+                if name == "fs_exists" || name == "fs_remove" || name == "fs_is_file" || name == "fs_is_dir" || name == "fs_list" || name == "fs_mkdir" {
                     if args.len() != 1 || (self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any) {
                         return Err(format!("Nano: {name}() requer caminho Text"));
                     }
-                    return Ok(if name == "fs_list" { Type::List } else if name == "fs_exists" { Type::Boolean } else { Type::Null });
+                    return Ok(if name == "fs_list" { Type::List } else if matches!(name, "fs_exists" | "fs_is_file" | "fs_is_dir") { Type::Boolean } else { Type::Null });
+                }
+                if name == "fs_cwd" || name == "os_cwd" {
+                    if !args.is_empty() { return Err(format!("Nano: {name}() não recebe argumentos")); }
+                    return Ok(Type::Text);
+                }
+                if name == "path_join" {
+                    if args.len() < 2 { return Err("Nano: path_join() recebe pelo menos 2 caminhos".into()); }
+                    for arg in args {
+                        let ty = self.expr_type(arg)?;
+                        if ty != Type::Text && ty != Type::Any { return Err("Nano: path_join() requer caminhos Text".into()); }
+                    }
+                    return Ok(Type::Text);
+                }
+                if matches!(name, "path_basename" | "path_dirname" | "path_extension") {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 caminho")); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Text && ty != Type::Any { return Err(format!("Nano: {name}() requer Text")); }
+                    return Ok(Type::Text);
                 }
                 if name == "env_get" {
                     if args.len() != 1 || (self.expr_type(&args[0])? != Type::Text && self.expr_type(&args[0])? != Type::Any) {
@@ -1147,6 +1177,14 @@ impl Semantic {
                         return Err("Nano: process_wait() recebe handle".into());
                     }
                     return Ok(Type::Number);
+                }
+                if name == "process_output" {
+                    if args.len() != 2 { return Err("Nano: process_output() recebe comando e lista de argumentos".into()); }
+                    return Ok(Type::Object);
+                }
+                if name == "os_args" {
+                    if !args.is_empty() { return Err("Nano: os_args() não recebe argumentos".into()); }
+                    return Ok(Type::List);
                 }
                 if name == "net_tcp_connect" {
                     if args.len() != 2 { return Err("Nano: net_tcp_connect() recebe host e porta".into()); }
