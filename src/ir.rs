@@ -195,12 +195,14 @@ struct AdamState {
     v: Vec<f32>,
 }
 
-pub(crate) struct Compiler;
+pub(crate) struct Compiler {
+    break_targets: Vec<Vec<usize>>,
+}
 
 pub(crate) struct Optimizer;
 
 impl Optimizer {
-    pub(crate) fn new() -> Self { Self }
+    pub(crate) fn new() -> Self { Self { break_targets: Vec::new() } }
 
     pub(crate) fn optimize_program(&mut self, mut program: IrProgram) -> IrProgram {
         program.code = self.optimize_code(program.code);
@@ -272,6 +274,7 @@ impl Compiler {
         for stmt in program {
             if let Stmt::Function(name, params, body) = stmt {
                 let mut function_code = Vec::new();
+                self.break_targets.clear();
                 for stmt in body {
                     self.compile_stmt(stmt, &mut function_code)?;
                 }
@@ -313,6 +316,14 @@ impl Compiler {
                 self.compile_expr(expr, code)?;
                 code.push(IrInst::Return);
             }
+            Stmt::Break => {
+                let Some(targets) = self.break_targets.last_mut() else {
+                    return Err("Nano: break só pode ser usado dentro de while ou for".into());
+                };
+                let jump = code.len();
+                code.push(IrInst::Jump(usize::MAX));
+                targets.push(jump);
+            }
             Stmt::Use(path) => code.push(IrInst::Use(path.clone())),
             Stmt::Function(_, _, _) => {}
             Stmt::If(cond, yes, no) => {
@@ -341,24 +352,34 @@ impl Compiler {
                 self.compile_expr(cond, code)?;
                 let exit = code.len();
                 code.push(IrInst::JumpIfFalse(usize::MAX));
+                self.break_targets.push(Vec::new());
                 for stmt in body {
                     self.compile_stmt(stmt, code)?;
                 }
                 code.push(IrInst::Jump(start));
                 let end = code.len();
                 code[exit] = IrInst::JumpIfFalse(end);
+                let breaks = self.break_targets.pop().unwrap_or_default();
+                for jump in breaks {
+                    code[jump] = IrInst::Jump(end);
+                }
             }
             Stmt::For(name, iterable, body) => {
                 self.compile_expr(iterable, code)?;
                 code.push(IrInst::IterInit);
                 let check = code.len();
                 code.push(IrInst::IterNext(name.clone(), usize::MAX));
+                self.break_targets.push(Vec::new());
                 for stmt in body {
                     self.compile_stmt(stmt, code)?;
                 }
                 code.push(IrInst::Jump(check));
                 let end = code.len();
                 code[check] = IrInst::IterNext(name.clone(), end);
+                let breaks = self.break_targets.pop().unwrap_or_default();
+                for jump in breaks {
+                    code[jump] = IrInst::Jump(end);
+                }
             }
         }
         Ok(())
