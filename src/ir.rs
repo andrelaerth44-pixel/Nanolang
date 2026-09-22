@@ -105,6 +105,9 @@ impl Optimizer {
                 IrInst::Jump(target) | IrInst::JumpIfFalse(target) => {
                     *target = map.get(*target).copied().unwrap_or(output_len);
                 }
+                IrInst::IterNext(_, target) => {
+                    *target = map.get(*target).copied().unwrap_or(output_len);
+                }
                 _ => {}
             }
         }
