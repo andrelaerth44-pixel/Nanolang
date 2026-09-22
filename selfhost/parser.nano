@@ -1,0 +1,526 @@
+# Nano self-hosted parser v0.1
+# Consome os tokens de selfhost/lexer.nano e produz uma AST em Objects/Lists.
+
+function ok(index, node) {
+    return {ok: true, index: index, node: node, error: ""}
+}
+
+function fail(index, message) {
+    return {ok: false, index: index, node: {}, error: message}
+}
+
+function token(tokens, index) {
+    return tokens[index]
+}
+
+function symbol(tokens, index, value) {
+    t = token(tokens, index)
+    return t.kind == "symbol" && t.text == value
+}
+
+function ident(tokens, index, value) {
+    t = token(tokens, index)
+    return t.kind == "ident" && t.text == value
+}
+
+function parse_program(tokens) {
+    statements = []
+    i = 0
+    n = len(tokens)
+
+    while i < n {
+        t = token(tokens, i)
+        if t.kind == "symbol" && t.text == "}" {
+            return fail(i, "bloco inesperado")
+        }
+        if t.kind == "ident" && t.text == "EOF" {
+            i = n
+        } else {
+            result = parse_statement(tokens, i)
+            if !result.ok {
+                return result
+            }
+            statements = append(statements, result.node)
+            i = result.index
+        }
+    }
+
+    return ok(i, {kind: "program", body: statements})
+}
+
+function parse_statement(tokens, index) {
+    t = token(tokens, index)
+
+    if t.kind == "ident" {
+        if t.text == "return" {
+            expr = parse_expression(tokens, index + 1)
+            if !expr.ok { return expr }
+            return ok(expr.index, {kind: "return", value: expr.node})
+        }
+
+        if t.text == "print" {
+            expr = parse_expression(tokens, index + 1)
+            if !expr.ok { return expr }
+            return ok(expr.index, {kind: "print", value: expr.node})
+        }
+
+        if t.text == "if" {
+            return parse_if(tokens, index)
+        }
+
+        if t.text == "while" {
+            return parse_while(tokens, index)
+        }
+
+        if t.text == "for" {
+            return parse_for(tokens, index)
+        }
+
+        if t.text == "use" {
+            path = token(tokens, index + 1)
+            if path.kind != "string" {
+                return fail(index, "use requer string")
+            }
+            return ok(index + 2, {kind: "use", path: path.text})
+        }
+
+        if t.text == "function" {
+            return parse_function(tokens, index)
+        }
+
+        next = token(tokens, index + 1)
+        if next.kind == "symbol" && next.text == "=" {
+            expr = parse_expression(tokens, index + 2)
+            if !expr.ok { return expr }
+            return ok(expr.index, {kind: "assign", name: t.text, value: expr.node})
+        }
+    }
+
+    expr = parse_expression(tokens, index)
+    if !expr.ok { return expr }
+    return ok(expr.index, {kind: "expr", value: expr.node})
+}
+
+function parse_function(tokens, index) {
+    name = token(tokens, index + 1)
+    if name.kind != "ident" {
+        return fail(index, "nome da função esperado")
+    }
+
+    if !symbol(tokens, index + 2, "(") {
+        return fail(index, "faltou '(' depois do nome da função")
+    }
+
+    params = []
+    i = index + 3
+    done = false
+
+    while i < len(tokens) && !done {
+        t = token(tokens, i)
+        if symbol(tokens, i, ")") {
+            done = true
+        } else {
+            if t.kind != "ident" {
+                return fail(i, "parâmetro esperado")
+            }
+            params = append(params, t.text)
+            i = i + 1
+            if symbol(tokens, i, ",") {
+                i = i + 1
+            }
+        }
+    }
+
+    block = parse_block(tokens, i + 1)
+    if !block.ok { return block }
+
+    return ok(block.index, {kind: "function", name: name.text, params: params, body: block.node})
+}
+
+function parse_if(tokens, index) {
+    condition = parse_expression(tokens, index + 1)
+    if !condition.ok { return condition }
+
+    yes = parse_block(tokens, condition.index)
+    if !yes.ok { return yes }
+
+    i = yes.index
+    no = {kind: "block", body: []}
+    if ident(tokens, i, "else") {
+        parsed = parse_block(tokens, i + 1)
+        if !parsed.ok { return parsed }
+        no = parsed.node
+        i = parsed.index
+    }
+
+    return ok(i, {kind: "if", condition: condition.node, yes: yes.node, no: no})
+}
+
+function parse_while(tokens, index) {
+    condition = parse_expression(tokens, index + 1)
+    if !condition.ok { return condition }
+
+    body = parse_block(tokens, condition.index)
+    if !body.ok { return body }
+
+    return ok(body.index, {kind: "while", condition: condition.node, body: body.node})
+}
+
+function parse_for(tokens, index) {
+    name = token(tokens, index + 1)
+    if name.kind != "ident" {
+        return fail(index, "variável do for esperada")
+    }
+    if !ident(tokens, index + 2, "in") {
+        return fail(index, "for requer in")
+    }
+
+    iterable = parse_expression(tokens, index + 3)
+    if !iterable.ok { return iterable }
+
+    body = parse_block(tokens, iterable.index)
+    if !body.ok { return body }
+
+    return ok(body.index, {kind: "for", name: name.text, iterable: iterable.node, body: body.node})
+}
+
+function parse_block(tokens, index) {
+    if !symbol(tokens, index, "{") {
+        return fail(index, "faltou '{'")
+    }
+
+    body = []
+    i = index + 1
+    done = false
+
+    while i < len(tokens) && !done {
+        if symbol(tokens, i, "}") {
+            done = true
+        } else {
+            statement = parse_statement(tokens, i)
+            if !statement.ok { return statement }
+            body = append(body, statement.node)
+            i = statement.index
+        }
+    }
+
+    if !done {
+        return fail(i, "bloco não terminado")
+    }
+
+    return ok(i + 1, {kind: "block", body: body})
+}
+
+function parse_expression(tokens, index) {
+    return parse_logical_or(tokens, index)
+}
+
+function parse_logical_or(tokens, index) {
+    result = parse_logical_and(tokens, index)
+    if !result.ok { return result }
+
+    left = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        if symbol(tokens, i, "||") {
+            right = parse_logical_and(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: "||", left: left, right: right.node}
+            i = right.index
+        } else {
+            done = true
+        }
+    }
+
+    return ok(i, left)
+}
+
+function parse_logical_and(tokens, index) {
+    result = parse_equality(tokens, index)
+    if !result.ok { return result }
+
+    left = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        if symbol(tokens, i, "&&") {
+            right = parse_equality(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: "&&", left: left, right: right.node}
+            i = right.index
+        } else {
+            done = true
+        }
+    }
+
+    return ok(i, left)
+}
+
+function parse_equality(tokens, index) {
+    result = parse_compare(tokens, index)
+    if !result.ok { return result }
+
+    left = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        if symbol(tokens, i, "==") {
+            right = parse_compare(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: "==", left: left, right: right.node}
+            i = right.index
+        } else if symbol(tokens, i, "!=") {
+            right = parse_compare(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: "!=", left: left, right: right.node}
+            i = right.index
+        } else {
+            done = true
+        }
+    }
+
+    return ok(i, left)
+}
+
+function parse_compare(tokens, index) {
+    result = parse_term(tokens, index)
+    if !result.ok { return result }
+
+    left = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        op = ""
+        if symbol(tokens, i, ">") { op = ">" }
+        else if symbol(tokens, i, ">=") { op = ">=" }
+        else if symbol(tokens, i, "<") { op = "<" }
+        else if symbol(tokens, i, "<=") { op = "<=" }
+        else { done = true }
+
+        if op != "" {
+            right = parse_term(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: op, left: left, right: right.node}
+            i = right.index
+        }
+    }
+
+    return ok(i, left)
+}
+
+function parse_term(tokens, index) {
+    result = parse_factor(tokens, index)
+    if !result.ok { return result }
+
+    left = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        op = ""
+        if symbol(tokens, i, "+") { op = "+" }
+        else if symbol(tokens, i, "-") { op = "-" }
+        else { done = true }
+
+        if op != "" {
+            right = parse_factor(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: op, left: left, right: right.node}
+            i = right.index
+        }
+    }
+
+    return ok(i, left)
+}
+
+function parse_factor(tokens, index) {
+    result = parse_unary(tokens, index)
+    if !result.ok { return result }
+
+    left = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        op = ""
+        if symbol(tokens, i, "*") { op = "*" }
+        else if symbol(tokens, i, "/") { op = "/" }
+        else if symbol(tokens, i, "%") { op = "%" }
+        else { done = true }
+
+        if op != "" {
+            right = parse_unary(tokens, i + 1)
+            if !right.ok { return right }
+            left = {kind: "binary", op: op, left: left, right: right.node}
+            i = right.index
+        }
+    }
+
+    return ok(i, left)
+}
+
+function parse_unary(tokens, index) {
+    if symbol(tokens, index, "-") {
+        result = parse_unary(tokens, index + 1)
+        if !result.ok { return result }
+        return ok(result.index, {kind: "unary", op: "-", value: result.node})
+    }
+
+    if symbol(tokens, index, "!") {
+        result = parse_unary(tokens, index + 1)
+        if !result.ok { return result }
+        return ok(result.index, {kind: "unary", op: "!", value: result.node})
+    }
+
+    return parse_postfix(tokens, index)
+}
+
+function parse_postfix(tokens, index) {
+    result = parse_primary(tokens, index)
+    if !result.ok { return result }
+
+    expr = result.node
+    i = result.index
+    done = false
+
+    while i < len(tokens) && !done {
+        if symbol(tokens, i, "(") {
+            args = []
+            j = i + 1
+            closed = false
+
+            while j < len(tokens) && !closed {
+                if symbol(tokens, j, ")") {
+                    closed = true
+                } else {
+                    arg = parse_expression(tokens, j)
+                    if !arg.ok { return arg }
+                    args = append(args, arg.node)
+                    j = arg.index
+                    if symbol(tokens, j, ",") {
+                        j = j + 1
+                    }
+                }
+            }
+
+            if !closed {
+                return fail(j, "chamada não terminada")
+            }
+
+            expr = {kind: "call", target: expr, args: args}
+            i = j + 1
+        } else if symbol(tokens, i, "[") {
+            index_result = parse_expression(tokens, i + 1)
+            if !index_result.ok { return index_result }
+            if !symbol(tokens, index_result.index, "]") {
+                return fail(index_result.index, "faltou ']'")
+            }
+            expr = {kind: "index", target: expr, index: index_result.node}
+            i = index_result.index + 1
+        } else if symbol(tokens, i, ".") {
+            field = token(tokens, i + 1)
+            if field.kind != "ident" {
+                return fail(i, "campo esperado")
+            }
+            expr = {kind: "field", target: expr, name: field.text}
+            i = i + 2
+        } else {
+            done = true
+        }
+    }
+
+    return ok(i, expr)
+}
+
+function parse_primary(tokens, index) {
+    t = token(tokens, index)
+
+    if t.kind == "number" {
+        return ok(index + 1, {kind: "number", value: to_number(t.text)})
+    }
+
+    if t.kind == "string" {
+        return ok(index + 1, {kind: "string", value: t.text})
+    }
+
+    if t.kind == "ident" {
+        if t.text == "true" {
+            return ok(index + 1, {kind: "boolean", value: true})
+        }
+        if t.text == "false" {
+            return ok(index + 1, {kind: "boolean", value: false})
+        }
+        return ok(index + 1, {kind: "ident", name: t.text})
+    }
+
+    if symbol(tokens, index, "(") {
+        result = parse_expression(tokens, index + 1)
+        if !result.ok { return result }
+        if !symbol(tokens, result.index, ")") {
+            return fail(result.index, "faltou ')'")
+        }
+        return ok(result.index + 1, result.node)
+    }
+
+    if symbol(tokens, index, "[") {
+        items = []
+        i = index + 1
+        done = false
+        while i < len(tokens) && !done {
+            if symbol(tokens, i, "]") {
+                done = true
+            } else {
+                item = parse_expression(tokens, i)
+                if !item.ok { return item }
+                items = append(items, item.node)
+                i = item.index
+                if symbol(tokens, i, ",") {
+                    i = i + 1
+                }
+            }
+        }
+        if !done { return fail(i, "lista não terminada") }
+        return ok(i + 1, {kind: "list", items: items})
+    }
+
+    if symbol(tokens, index, "{") {
+        fields = []
+        i = index + 1
+        done = false
+        while i < len(tokens) && !done {
+            if symbol(tokens, i, "}") {
+                done = true
+            } else {
+                key = token(tokens, i)
+                if key.kind != "ident" && key.kind != "string" {
+                    return fail(i, "chave de objeto esperada")
+                }
+                if !symbol(tokens, i + 1, ":") {
+                    return fail(i + 1, "faltou ':'")
+                }
+                value = parse_expression(tokens, i + 2)
+                if !value.ok { return value }
+                fields = append(fields, {key: key.text, value: value.node})
+                i = value.index
+                if symbol(tokens, i, ",") {
+                    i = i + 1
+                }
+            }
+        }
+        if !done { return fail(i, "objeto não terminado") }
+        return ok(i + 1, {kind: "object", fields: fields})
+    }
+
+    return fail(index, "expressão esperada")
+}
+
+function main() {
+    tokens = lex("main.nano")
+    parsed = parse_program(tokens)
+    print to_text(parsed)
+}
