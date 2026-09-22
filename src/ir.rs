@@ -10,6 +10,7 @@ use std::process::{Child, Command};
 use std::thread::{self, JoinHandle};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
+use serde_json::Value as JsonValue;
 
 use super::{backend, qualified_name, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
 use backend::{ElementwiseOp, TensorBackend};
@@ -838,6 +839,8 @@ impl IrRuntime {
             "std.http.get" => "net_http_get",
             "std.env.get" => "env_get",
             "std.env.set" => "env_set",
+            "std.json.encode" => "json_encode",
+            "std.json.decode" => "json_decode",
             "std.math.abs" => "abs",
             "std.math.sqrt" => "sqrt",
             "std.math.floor" => "floor",
@@ -965,6 +968,21 @@ impl IrRuntime {
             let value = text_arg(&args[1], "valor")?;
             std::env::set_var(&key, &value);
             return Ok(Value::Null);
+        }
+        if name == "json_encode" {
+            if args.len() != 1 { return Err("Nano: json_encode() recebe 1 valor".into()); }
+            let json = value_to_json(&args[0])?;
+            let text = serde_json::to_string(&json)
+                .map_err(|e| format!("Nano: json_encode(): {e}"))?;
+            return Ok(Value::Text(text));
+        }
+
+        if name == "json_decode" {
+            if args.len() != 1 { return Err("Nano: json_decode() recebe 1 Text".into()); }
+            let text = text_arg(&args[0], "JSON")?;
+            let json = serde_json::from_str::<JsonValue>(&text)
+                .map_err(|e| format!("Nano: json_decode(): {e}"))?;
+            return json_to_value(json);
         }
 
         if name == "time_now_ms" {
@@ -1865,6 +1883,48 @@ impl IrRuntime {
 }
 
 
+fn value_to_json(value: &Value) -> Result<JsonValue, String> {
+    Ok(match value {
+        Value::Number(v) => JsonValue::from(*v),
+        Value::Text(v) => JsonValue::from(v.clone()),
+        Value::Boolean(v) => JsonValue::from(*v),
+        Value::Null => JsonValue::Null,
+        Value::List(values) => JsonValue::Array(
+            values.iter().map(value_to_json).collect::<Result<Vec<_>, _>>()?
+        ),
+        Value::Object(values) => {
+            let mut object = serde_json::Map::new();
+            for (key, item) in values {
+                object.insert(key.clone(), value_to_json(item)?);
+            }
+            JsonValue::Object(object)
+        }
+        Value::Function(_) | Value::Tensor(_) => {
+            return Err("Nano: json_encode() não aceita Function ou Tensor".into());
+        }
+    })
+}
+
+fn json_to_value(value: JsonValue) -> Result<Value, String> {
+    Ok(match value {
+        JsonValue::Null => Value::Null,
+        JsonValue::Bool(v) => Value::Boolean(v),
+        JsonValue::Number(v) => Value::Number(
+            v.as_f64().ok_or_else(|| "Nano: número JSON fora do formato Number".to_string())?
+        ),
+        JsonValue::String(v) => Value::Text(v),
+        JsonValue::Array(values) => Value::List(
+            values.into_iter().map(json_to_value).collect::<Result<Vec<_>, _>>()?
+        ),
+        JsonValue::Object(values) => {
+            let mut object = HashMap::new();
+            for (key, item) in values {
+                object.insert(key, json_to_value(item)?);
+            }
+            Value::Object(object)
+        }
+    })
+}
 fn text_arg(value: &Value, label: &str) -> Result<String, String> {
     match value { Value::Text(v) => Ok(v.clone()), _ => Err(format!("Nano: {label} requer Text")) }
 }
