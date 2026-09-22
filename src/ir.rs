@@ -74,6 +74,8 @@ enum TaskInst {
     Const(TaskValue),
     Load(String),
     Store(String),
+    SetIndex,
+    SetField(String),
     Binary(Op),
     Unary(crate::UnaryOp),
     FusedMulAdd,
@@ -210,6 +212,7 @@ struct AdamState {
 
 pub(crate) struct Compiler {
     break_targets: Vec<Vec<usize>>,
+    known_functions: HashSet<String>,
 }
 
 pub(crate) struct Optimizer;
@@ -278,10 +281,16 @@ impl Optimizer {
 }
 
 impl Compiler {
-    pub(crate) fn new() -> Self { Self { break_targets: Vec::new() } }
+    pub(crate) fn new() -> Self { Self { break_targets: Vec::new(), known_functions: HashSet::new() } }
 
     pub(crate) fn compile(&mut self, program: &[Stmt]) -> Result<IrProgram, String> {
         let mut functions = HashMap::new();
+        self.known_functions.clear();
+        for stmt in program {
+            if let Stmt::Function(name, _, _) = stmt {
+                self.known_functions.insert(name.clone());
+            }
+        }
         let mut code = Vec::new();
 
         for stmt in program {
@@ -420,7 +429,13 @@ impl Compiler {
     fn compile_expr(&mut self, expr: &Expr, code: &mut Vec<IrInst>) -> Result<(), String> {
         match expr {
             Expr::Value(value) => code.push(IrInst::Const(value.clone())),
-            Expr::Var(name) => code.push(IrInst::Load(name.clone())),
+            Expr::Var(name) => {
+                if self.known_functions.contains(name) {
+                    code.push(IrInst::Const(Value::Function(name.clone())));
+                } else {
+                    code.push(IrInst::Load(name.clone()));
+                }
+            },
             Expr::List(items) => {
                 for item in items {
                     self.compile_expr(item, code)?;
@@ -507,11 +522,21 @@ impl Compiler {
                 self.compile_expr(expr, code)?;
                 code.push(IrInst::Unary(*op));
             }
-            Expr::Call(name, args) => {
+            Expr::Call(target, args) => {
+                if let Expr::Var(name) = target.as_ref() {
+                    if self.known_functions.contains(name) {
+                        for arg in args {
+                            self.compile_expr(arg, code)?;
+                        }
+                        code.push(IrInst::Call(name.clone(), args.len()));
+                        return Ok(());
+                    }
+                }
+                self.compile_expr(target, code)?;
                 for arg in args {
                     self.compile_expr(arg, code)?;
                 }
-                code.push(IrInst::Call(name.clone(), args.len()));
+                code.push(IrInst::CallValue(args.len()));
             }
             Expr::Index(target, index) => {
                 self.compile_expr(target, code)?;
