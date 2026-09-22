@@ -1913,7 +1913,7 @@ fn main() {
             process::exit(2);
         }
     };
-    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New) {
+    if matches!(command, CliCommand::PackageInit | CliCommand::PackageAdd | CliCommand::PackageRemove | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New) {
         let root = Path::new(&path);
         let result = match command {
             CliCommand::PackageInit => {
@@ -1922,6 +1922,23 @@ fn main() {
                     .filter(|v| !v.is_empty())
                     .unwrap_or("nano-project");
                 package::init(root, name)
+            }
+            CliCommand::PackageAdd => {
+                let spec = output.as_deref().ok_or_else(|| "uso: nano package add nome=caminho [diretório]".to_string());
+                match spec {
+                    Ok(spec) => match spec.split_once('=') {
+                        Some((name, dependency)) => package::add(root, name, dependency),
+                        None => Err("uso: nano package add nome=caminho [diretório]".into()),
+                    },
+                    Err(e) => Err(e),
+                }
+            }
+            CliCommand::PackageRemove => {
+                let name = output.as_deref().ok_or_else(|| "uso: nano package remove nome [diretório]".to_string());
+                match name {
+                    Ok(name) => package::remove(root, name),
+                    Err(e) => Err(e),
+                }
             }
             CliCommand::PackageLock => package::lock(root),
             CliCommand::PackageVerify => package::verify(root),
