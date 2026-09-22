@@ -1,0 +1,87 @@
+# Nano self-hosted lexer v0.1
+# Lê um arquivo .nano e produz uma lista de tokens como Objects.
+
+function is_space(c) {
+    return contains(" \n\r\t", c)
+}
+
+function is_alpha(c) {
+    return contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_", c)
+}
+
+function is_digit(c) {
+    return contains("0123456789", c)
+}
+
+function is_alnum(c) {
+    return is_alpha(c) or is_digit(c)
+}
+
+function lex(path) {
+    source = fs_read_text(path)
+    tokens = []
+    i = 0
+    n = len(source)
+
+    while i < n {
+        c = char_at(source, i)
+
+        if is_space(c) {
+            i = i + 1
+        } else if c == "#" {
+            while i < n {
+                c = char_at(source, i)
+                i = i + 1
+                if c == "\n" {
+                    break
+                }
+            }
+        } else if is_alpha(c) {
+            start = i
+            i = i + 1
+            while i < n {
+                c = char_at(source, i)
+                if is_alnum(c) {
+                    i = i + 1
+                } else {
+                    break
+                }
+            }
+            tokens = append(tokens, {kind: "ident", text: substring(source, start, i)})
+        } else if is_digit(c) {
+            start = i
+            i = i + 1
+            while i < n {
+                c = char_at(source, i)
+                if is_digit(c) or c == "." {
+                    i = i + 1
+                } else {
+                    break
+                }
+            }
+            tokens = append(tokens, {kind: "number", text: substring(source, start, i)})
+        } else if c == "\"" {
+            start = i
+            i = i + 1
+            while i < n {
+                c = char_at(source, i)
+                i = i + 1
+                if c == "\"" {
+                    break
+                }
+            }
+            tokens = append(tokens, {kind: "string", text: substring(source, start + 1, i - 1)})
+        } else {
+            tokens = append(tokens, {kind: "symbol", text: c})
+            i = i + 1
+        }
+    }
+
+    return tokens
+}
+
+function main() {
+    path = "main.nano"
+    tokens = lex(path)
+    print join(tokens, "\n")
+}
