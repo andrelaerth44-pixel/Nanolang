@@ -149,6 +149,9 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
                     "triggerCharacters": [".", "_"]
                 },
                 "hoverProvider": true,
+                "definitionProvider": true,
+                "referencesProvider": true,
+                "renameProvider": true,
                 "documentFormattingProvider": true,
                 "codeActionProvider": true
             },
@@ -164,6 +167,9 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
         "exit" => Value::Null,
         "textDocument/completion" => completion(server, request),
         "textDocument/hover" => hover(server, request),
+        "textDocument/definition" => definition(server, request),
+        "textDocument/references" => references(server, request),
+        "textDocument/rename" => rename(server, request),
         "textDocument/formatting" => formatting(server, request),
         "textDocument/codeAction" => code_actions(server, request),
         "textDocument/diagnostic" => document_diagnostic(server, request),
@@ -291,6 +297,103 @@ fn hover(server: &Server, request: &Value) -> Value {
         "contents": {
             "kind": "markdown",
             "value": format!("**{}**\n\n{}", word, description)
+        }
+    })
+}
+
+fn definition(server: &Server, request: &Value) -> Value {
+    let text = document_text(server, request);
+    let Some(word) = word_at_position(&text, request) else { return Value::Null; };
+
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let prefix_len = line.len() - trimmed.len();
+        if let Some(rest) = trimmed.strip_prefix("function ") {
+            if rest.starts_with(&word) {
+                let character = prefix_len + "function ".len();
+                return json!([{
+                    "uri": document_uri(request),
+                    "range": {
+                        "start": { "line": line_no, "character": character },
+                        "end": { "line": line_no, "character": character + word.chars().count() }
+                    }
+                }]);
+            }
+        }
+    }
+    Value::Null
+}
+
+fn references(server: &Server, request: &Value) -> Value {
+    let text = document_text(server, request);
+    let Some(word) = word_at_position(&text, request) else { return json!([]); };
+    let mut result = Vec::new();
+
+    for (line_no, line) in text.lines().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let target: Vec<char> = word.chars().collect();
+        if target.is_empty() { continue; }
+
+        for start in 0..=chars.len().saturating_sub(target.len()) {
+            if chars[start..start + target.len()] == target {
+                let left_ok = start == 0 || !is_word(chars[start - 1]);
+                let end = start + target.len();
+                let right_ok = end == chars.len() || !is_word(chars[end]);
+                if left_ok && right_ok {
+                    result.push(json!({
+                        "uri": document_uri(request),
+                        "range": {
+                            "start": { "line": line_no, "character": start },
+                            "end": { "line": line_no, "character": end }
+                        }
+                    }));
+                }
+            }
+        }
+    }
+
+    Value::Array(result)
+}
+
+fn rename(server: &Server, request: &Value) -> Value {
+    let text = document_text(server, request);
+    let Some(old) = word_at_position(&text, request) else { return Value::Null; };
+    let new_name = request
+        .pointer("/params/newName")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    if new_name.is_empty() || !new_name.chars().enumerate().all(|(i, c)| {
+        c.is_ascii_alphanumeric() || c == '_' && i > 0 || (c == '_' && i == 0) 
+    }) || new_name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return Value::Null;
+    }
+
+    let mut edits = Vec::new();
+    let chars_old: Vec<char> = old.chars().collect();
+
+    for (line_no, line) in text.lines().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        if chars_old.is_empty() { continue; }
+        for start in 0..=chars.len().saturating_sub(chars_old.len()) {
+            if chars[start..start + chars_old.len()] != chars_old { continue; }
+            let end = start + chars_old.len();
+            if start > 0 && is_word(chars[start - 1]) { continue; }
+            if end < chars.len() && is_word(chars[end]) { continue; }
+            edits.push(json!({
+                "range": {
+                    "start": { "line": line_no, "character": start },
+                    "end": { "line": line_no, "character": end }
+                },
+                "newText": new_name
+            }));
+        }
+    }
+
+    json!({
+        "changes": {
+            document_uri(request): edits
         }
     })
 }
