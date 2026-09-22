@@ -92,7 +92,7 @@ pub(crate) struct GpuBackend {
 
 impl GpuBackend {
     pub(crate) fn new() -> Result<Self, BackendError> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
