@@ -408,6 +408,14 @@ enum Stmt {
 
 struct Parser { tokens: Vec<Token>, pos: usize }
 
+fn qualified_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Var(name) => Some(name.clone()),
+        Expr::Field(target, name) => Some(format!("{}.{}", qualified_name(target)?, name)),
+        _ => None,
+    }
+}
+
 impl Parser {
     fn new(tokens: Vec<Token>) -> Self { Self { tokens, pos: 0 } }
     fn peek(&self) -> &Token { &self.tokens[self.pos] }
@@ -643,10 +651,8 @@ impl Parser {
             match self.peek() {
                 Token::LeftParen => {
                     self.advance();
-                    let name = match expr {
-                        Expr::Var(n) => n,
-                        _ => return Err("Nano: chamada deve usar o nome de uma função na v0.2".into()),
-                    };
+                    let name = qualified_name(&expr)
+                        .ok_or_else(|| "Nano: chamada requer um nome de função ou namespace qualificado".to_string())?;
                     let mut args = Vec::new();
                     if !matches!(self.peek(), Token::RightParen) {
                         loop {
