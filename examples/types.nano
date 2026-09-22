@@ -1,0 +1,15 @@
+# Nano 0.4 — tipos inferidos automaticamente
+
+name = "André"
+age = 25
+active = true
+numbers = [10, 20, 30]
+
+total = age + 5
+message = "idade: " + age
+
+print name
+print total
+print message
+print active
+print len(numbers)
