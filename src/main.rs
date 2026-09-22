@@ -11,6 +11,7 @@ mod npu;
 mod sync_runtime;
 mod crypto;
 mod http;
+mod tls;
 mod selfhost_native;
 mod dap;
 
