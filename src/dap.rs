@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 
-use crate::{ir::{self, DebugSession, DebugStop}, Lexer, Parser, Semantic};
+use crate::{ir::{self, DebugSession, DebugStepMode, DebugStop}, Lexer, Parser, Semantic};
 
 pub(crate) fn serve() -> Result<(), String> {
     let stdin = io::stdin();
@@ -22,7 +22,7 @@ pub(crate) fn serve() -> Result<(), String> {
         match command {
             "initialize" => respond(&mut out, seq, command, json!({
                 "supportsConfigurationDoneRequest": true,
-                "supportsFunctionBreakpoints": false,
+                "supportsFunctionBreakpoints": true,
                 "supportsConditionalBreakpoints": false,
                 "supportsEvaluateForHovers": true,
                 "supportsStepBack": false,
@@ -45,18 +45,19 @@ pub(crate) fn serve() -> Result<(), String> {
 
                 let text = fs::read_to_string(program)
                     .map_err(|e| format!("Nano DAP: não foi possível ler '{program}': {e}"))?;
-                let tokens = Lexer::new(&text).lex()?;
-                let parsed = Parser::new(tokens).program()?;
+                let mut lexer = Lexer::new(&text);
+                let (tokens, token_spans) = lexer.lex_with_spans()?;
+                let mut parser = Parser::new_with_spans(tokens, token_spans);
+                let parsed = parser.program()?;
+                let spans = parser.statement_spans();
                 let mut semantic = Semantic::new();
                 semantic.check(&parsed)?;
                 let mut compiler = ir::Compiler::new();
-                let ir_program = compiler.compile(&parsed)?;
-                let mut optimizer = ir::Optimizer::new();
-                let ir_program = optimizer.optimize_program(ir_program);
+                let (ir_program, debug_map) = compiler.compile_debug(&parsed, &spans)?;
 
                 source_path = program.to_string();
                 source_text = text;
-                session = Some(DebugSession::new(&ir_program)?);
+                session = Some(DebugSession::new(&ir_program, &debug_map)?);
 
                 respond(&mut out, seq, command, Value::Null)?;
                 send_event(&mut out, "initialized", Value::Null)?;
@@ -81,34 +82,34 @@ pub(crate) fn serve() -> Result<(), String> {
             "configurationDone" => respond(&mut out, seq, command, Value::Null)?,
             "threads" => respond(&mut out, seq, command, json!({"threads":[{"id":1,"name":"nano-main"}]}))?,
             "stackTrace" => {
-                let frame = if let Some(active) = session.as_ref() {
-                    json!({
-                        "id": 1,
-                        "name": "_main",
-                        "line": active.current_line(),
-                        "column": 1,
-                        "source": {"name": Path::new(&source_path).file_name().and_then(|v| v.to_str()).unwrap_or("main.nano"), "path": source_path}
-                    })
-                } else {
-                    json!({
-                        "id": 1,
-                        "name": "_main",
-                        "line": 1,
-                        "column": 1
-                    })
-                };
-                respond(&mut out, seq, command, json!({"stackFrames":[frame],"totalFrames":1}))?;
+                let frames = session.as_ref().map(|active| active.stack_frames()).unwrap_or_default();
+                let stack_frames = frames.into_iter().map(|(id, name, line, column)| json!({
+                    "id": id,
+                    "name": name,
+                    "line": line,
+                    "column": column,
+                    "source": {
+                        "name": Path::new(&source_path).file_name().and_then(|v| v.to_str()).unwrap_or("main.nano"),
+                        "path": source_path
+                    }
+                })).collect::<Vec<_>>();
+                respond(&mut out, seq, command, json!({"stackFrames":stack_frames,"totalFrames":stack_frames.len()}))?;
             }
-            "scopes" => respond(&mut out, seq, command, json!({
-                "scopes": [
-                    {"name":"Locals","presentationHint":"locals","variablesReference":1,"expensive":false}
-                ]
-            }))?,
+            "scopes" => {
+                let frame_id = request.pointer("/arguments/frameId").and_then(Value::as_u64).unwrap_or(1);
+                respond(&mut out, seq, command, json!({
+                    "scopes": [
+                        {"name":"Locals","presentationHint":"locals","variablesReference":frame_id * 1000 + 1,"expensive":false}
+                    ]
+                }))?
+            },
             "variables" => {
                 let mut variables = Vec::new();
-                if request.pointer("/arguments/variablesReference").and_then(Value::as_u64) == Some(1) {
-                    if let Some(active) = session.as_ref() {
-                        for (name, value) in active.variables() {
+                if let Some(reference) = request.pointer("/arguments/variablesReference").and_then(Value::as_u64) {
+                    if reference >= 1001 {
+                        let frame_id = reference / 1000;
+                        if let Some(active) = session.as_ref() {
+                            for (name, value) in active.variables_for_frame(frame_id) {
                             variables.push(json!({
                                 "name": name,
                                 "value": value.show(),
@@ -122,8 +123,9 @@ pub(crate) fn serve() -> Result<(), String> {
             }
             "evaluate" => {
                 let expression = request.pointer("/arguments/expression").and_then(Value::as_str).unwrap_or("");
+                let frame_id = request.pointer("/arguments/frameId").and_then(Value::as_u64).unwrap_or(1);
                 let result = session.as_ref()
-                    .and_then(|active| active.evaluate(expression))
+                    .and_then(|active| active.evaluate_for_frame(frame_id, expression))
                     .map(|value| json!({"result":value.show(),"type":value_type(&value),"variablesReference":0}))
                     .unwrap_or_else(|| json!({"result":"<unavailable>","variablesReference":0}));
                 respond(&mut out, seq, command, result)?;
@@ -132,9 +134,17 @@ pub(crate) fn serve() -> Result<(), String> {
                 respond(&mut out, seq, command, json!({"allThreadsContinued":true}))?;
                 run_until_stop(&mut out, session.as_mut())?;
             }
-            "next" | "stepIn" | "stepOut" => {
+            "next" => {
                 respond(&mut out, seq, command, Value::Null)?;
-                run_one_step(&mut out, session.as_mut())?;
+                run_one_step(&mut out, session.as_mut(), DebugStepMode::Next)?;
+            }
+            "stepIn" => {
+                respond(&mut out, seq, command, Value::Null)?;
+                run_one_step(&mut out, session.as_mut(), DebugStepMode::Instruction)?;
+            }
+            "stepOut" => {
+                respond(&mut out, seq, command, Value::Null)?;
+                run_one_step(&mut out, session.as_mut(), DebugStepMode::StepOut)?;
             }
             "pause" => {
                 respond(&mut out, seq, command, Value::Null)?;
@@ -169,11 +179,11 @@ pub(crate) fn serve() -> Result<(), String> {
     Ok(())
 }
 
-fn run_one_step(out: &mut impl Write, session: Option<&mut DebugSession>) -> Result<(), String> {
+fn run_one_step(out: &mut impl Write, session: Option<&mut DebugSession>, mode: DebugStepMode) -> Result<(), String> {
     let Some(session) = session else {
         return send_event(out, "terminated", Value::Null);
     };
-    match session.step()? {
+    match session.step(mode)? {
         DebugStop::Exited => send_event(out, "terminated", Value::Null),
         DebugStop::Breakpoint => send_event(out, "stopped", json!({"reason":"breakpoint","threadId":1,"allThreadsStopped":true})),
         DebugStop::Step => send_event(out, "stopped", json!({"reason":"step","threadId":1,"allThreadsStopped":true})),
@@ -184,12 +194,10 @@ fn run_until_stop(out: &mut impl Write, session: Option<&mut DebugSession>) -> R
     let Some(session) = session else {
         return send_event(out, "terminated", Value::Null);
     };
-    loop {
-        match session.step()? {
-            DebugStop::Exited => return send_event(out, "terminated", Value::Null),
-            DebugStop::Breakpoint => return send_event(out, "stopped", json!({"reason":"breakpoint","threadId":1,"allThreadsStopped":true})),
-            DebugStop::Step => continue,
-        }
+    match session.continue_run()? {
+        DebugStop::Exited => send_event(out, "terminated", Value::Null),
+        DebugStop::Breakpoint => send_event(out, "stopped", json!({"reason":"breakpoint","threadId":1,"allThreadsStopped":true})),
+        DebugStop::Step => send_event(out, "stopped", json!({"reason":"step","threadId":1,"allThreadsStopped":true})),
     }
 }
 
