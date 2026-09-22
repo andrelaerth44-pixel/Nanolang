@@ -893,7 +893,26 @@ fn main() {
     let mut optimizer = ir::Optimizer::new();
     let ir_program = optimizer.optimize_program(ir_program);
 
-    if let Err(e) = ir::IrRuntime::new().run(&ir_program) {
+    let backend_kind = match env::var("NANO_BACKEND") {
+        Ok(value) => match backend::BackendKind::parse(&value) {
+            Ok(kind) => kind,
+            Err(e) => {
+                eprintln!("Nano: {e}");
+                process::exit(1);
+            }
+        },
+        Err(_) => backend::BackendKind::Cpu,
+    };
+
+    let mut runtime = match ir::IrRuntime::with_backend(backend_kind) {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+    };
+
+    if let Err(e) = runtime.run(&ir_program) {
         eprintln!("{e}");
         process::exit(1);
     }
