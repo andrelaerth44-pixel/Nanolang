@@ -142,7 +142,11 @@ fn join_tokens(tokens: &[String]) -> String {
                 let unary = matches!(token.as_str(), "+" | "-")
                     && !token_is_value(prev)
                     && prev != ")" && prev != "]" && prev != "}";
-                need_space = !unary;
+                need_space = if unary {
+                    is_operator(prev) && prev != "(" && prev != "["
+                } else {
+                    true
+                };
             } else if is_operator(prev) {
                 let unary_prev = matches!(prev, "+" | "-")
                     && !token_is_value(tokens.get(index.saturating_sub(2)).map(String::as_str).unwrap_or(""));
