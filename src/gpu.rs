@@ -125,13 +125,18 @@ impl GpuBackend {
         let fma_module = make_shader("nano-fma", FMA_SHADER);
         let reduce_module = make_shader("nano-reduce", REDUCE_SHADER);
 
+        let matmul = make_pipeline("nano-matmul-pipeline", &matmul_module);
+        let elementwise = make_pipeline("nano-elementwise-pipeline", &elementwise_module);
+        let fma = make_pipeline("nano-fma-pipeline", &fma_module);
+        let reduce = make_pipeline("nano-reduce-pipeline", &reduce_module);
+
         Ok(Self {
             device,
             queue,
-            matmul: make_pipeline("nano-matmul-pipeline", &matmul_module),
-            elementwise: make_pipeline("nano-elementwise-pipeline", &elementwise_module),
-            fma: make_pipeline("nano-fma-pipeline", &fma_module),
-            reduce: make_pipeline("nano-reduce-pipeline", &reduce_module),
+            matmul,
+            elementwise,
+            fma,
+            reduce,
             planner: MemoryPlanner::new(),
         })
     }
