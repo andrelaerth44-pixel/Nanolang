@@ -1047,6 +1047,7 @@ impl Semantic {
                     "std.net.http_get" | "std.http.get" => "net_http_get",
                     "std.env.get" => "env_get",
                     "std.env.set" => "env_set",
+                    "std.math.matmul_transposed" => "matmul_transposed",
                     "std.json.encode" => "json_encode",
                     "std.json.decode" => "json_decode",
                     "std.sync.mutex_new" => "sync_mutex_new",
@@ -1523,6 +1524,17 @@ impl Semantic {
                     let shape_type = self.expr_type(&args[1])?;
                     if data_type != Type::List || shape_type != Type::List {
                         return Err("Nano: parameter() requer listas de dados e shape".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
+                if name == "matmul_transposed" {
+                    if args.len() != 4 { return Err("Nano: matmul_transposed() recebe A, B, transposeA, transposeB".into()); }
+                    let a = self.expr_type(&args[0])?;
+                    let b = self.expr_type(&args[1])?;
+                    let ta = self.expr_type(&args[2])?;
+                    let tb = self.expr_type(&args[3])?;
+                    if (a != Type::Tensor && a != Type::Any) || (b != Type::Tensor && b != Type::Any) || ta != Type::Boolean || tb != Type::Boolean {
+                        return Err("Nano: matmul_transposed() requer Tensor, Tensor, Boolean, Boolean".into());
                     }
                     return Ok(Type::Tensor);
                 }
