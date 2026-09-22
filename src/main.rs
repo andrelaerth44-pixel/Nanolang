@@ -1612,7 +1612,7 @@ fn parse_cli(
     if matches!(command, CliCommand::Test) && native_requested {
         return Err("Nano: --native não é válido com 'test'".into());
     }
-    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify)
+    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New | CliCommand::Fmt | CliCommand::Lsp | CliCommand::Repl | CliCommand::Debug)
         && (native_requested || selected_backend.is_some() || selected_dtype.is_some() || output.is_some()) {
         return Err("Nano: opções de execução/build não são válidas com 'package'".into());
     }
