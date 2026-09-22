@@ -538,7 +538,7 @@ impl Semantic {
 
         let inferred = if saw_return { return_type } else { Type::Null };
         if let Some((_, stored)) = self.functions.get_mut(name) {
-            *stored = (params.len(), inferred);
+            *stored = inferred;
         }
 
         self.vars = saved;
@@ -563,9 +563,26 @@ impl Semantic {
                 Ok(())
             }
             Stmt::If(cond, yes, no) => {
-                self.expect_type(self.expr_type(cond)?, &[Type::Boolean, Type::Number, Type::Text, Type::List, Type::Object, Type::Null, Type::Any], "condição")?;
+                let cond_type = self.expr_type(cond)?;
+                self.expect_type(cond_type, &[Type::Boolean, Type::Number, Type::Text, Type::List, Type::Object, Type::Null, Type::Any], "condição")?;
                 for s in yes { self.check_stmt_with_return(s, return_type, saw_return)?; }
                 for s in no { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                Ok(())
+            }
+            Stmt::While(cond, body) => {
+                let cond_type = self.expr_type(cond)?;
+                self.expect_type(cond_type, &[Type::Boolean, Type::Number, Type::Text, Type::List, Type::Object, Type::Null, Type::Any], "condição")?;
+                for s in body { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                Ok(())
+            }
+            Stmt::For(name, iterable, body) => {
+                self.expr_type(iterable)?;
+                let previous = self.vars.insert(name.clone(), Type::Any);
+                for s in body { self.check_stmt_with_return(s, return_type, saw_return)?; }
+                match previous {
+                    Some(ty) => { self.vars.insert(name.clone(), ty); }
+                    None => { self.vars.remove(name); }
+                }
                 Ok(())
             }
             _ => self.check_stmt(stmt),
@@ -589,6 +606,21 @@ impl Semantic {
                 self.expr_type(cond)?;
                 for s in yes { self.check_stmt(s)?; }
                 for s in no { self.check_stmt(s)?; }
+                Ok(())
+            }
+            Stmt::While(cond, body) => {
+                self.expr_type(cond)?;
+                for s in body { self.check_stmt(s)?; }
+                Ok(())
+            }
+            Stmt::For(name, iterable, body) => {
+                self.expr_type(iterable)?;
+                let previous = self.vars.insert(name.clone(), Type::Any);
+                for s in body { self.check_stmt(s)?; }
+                match previous {
+                    Some(ty) => { self.vars.insert(name.clone(), ty); }
+                    None => { self.vars.remove(name); }
+                }
                 Ok(())
             }
             Stmt::Use(_) => Ok(()),
