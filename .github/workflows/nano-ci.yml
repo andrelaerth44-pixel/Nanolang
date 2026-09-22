@@ -65,10 +65,17 @@ jobs:
 
       - name: Self-host source checks
         run: |
-          for f in selfhost/lexer.nano selfhost/parser.nano selfhost/compiler.nano; do
-            echo "=== Nano check: $f ==="
-            cargo run --quiet --bin nano -- check "$f"
-          done
+          echo "=== Nano check: selfhost/lexer.nano ==="
+          cargo run --quiet --bin nano -- check selfhost/lexer.nano
+          echo "=== PASS: selfhost/lexer.nano ==="
+
+          echo "=== Nano check: selfhost/parser.nano ==="
+          cargo run --quiet --bin nano -- check selfhost/parser.nano
+          echo "=== PASS: selfhost/parser.nano ==="
+
+          echo "=== Nano check: selfhost/compiler.nano ==="
+          cargo run --quiet --bin nano -- check selfhost/compiler.nano
+          echo "=== PASS: selfhost/compiler.nano ==="
 
       - name: Self-host bootstrap
         run: |
