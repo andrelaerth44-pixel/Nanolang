@@ -16,3 +16,6 @@ assert(std.fs.exists(path), "fs-exists")
 assert(std.fs.read_text(path) == "nano", "fs-read")
 std.fs.remove(path)
 assert(!std.fs.exists(path), "fs-remove-exists")
+
+assert(std.math.pow(2, 8) == 256, "std-math-pow")
+assert(std.env.get("NANO_UNSET_TEST") == null, "std-env-get-missing")
