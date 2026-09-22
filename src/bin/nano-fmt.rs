@@ -139,7 +139,7 @@ fn join_tokens(tokens: &[String]) -> String {
             } else if token == "(" {
                 need_space = false;
             } else if is_operator(token) {
-                let unary = matches!(token, "+" | "-")
+                let unary = matches!(token.as_str(), "+" | "-")
                     && !token_is_value(prev)
                     && prev != ")" && prev != "]" && prev != "}";
                 need_space = !unary;
@@ -230,7 +230,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::format_source;
+    use super::{format_source, normalize_inline};
 
     #[test]
     fn normalizes_inline_spacing() {
