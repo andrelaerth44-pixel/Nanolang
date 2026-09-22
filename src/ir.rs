@@ -266,11 +266,23 @@ pub(crate) struct IrRuntime {
     vars: HashMap<String, Value>,
     functions: HashMap<String, IrFunction>,
     adam: HashMap<u64, AdamState>,
+    backend: Box<dyn TensorBackend>,
 }
 
 impl IrRuntime {
     pub(crate) fn new() -> Self {
-        Self { vars: HashMap::new(), functions: HashMap::new(), adam: HashMap::new() }
+        Self::with_backend(backend::BackendKind::Cpu).expect("CPU backend must be available")
+    }
+
+    pub(crate) fn with_backend(kind: backend::BackendKind) -> Result<Self, String> {
+        let backend = backend::create(kind)
+            .map_err(|e| format!("Nano: backend {}: {}", kind.name(), e))?;
+        Ok(Self {
+            vars: HashMap::new(),
+            functions: HashMap::new(),
+            adam: HashMap::new(),
+            backend,
+        })
     }
 
     pub(crate) fn run(&mut self, program: &IrProgram) -> Result<(), String> {
@@ -450,14 +462,14 @@ impl IrRuntime {
             if args.len() != 2 {
                 return Err("Nano: matmul() recebe 2 tensores".into());
             }
-            return matmul_values(&args[0], &args[1]);
+            return matmul_values(&args[0], &args[1], self.backend.as_ref());
         }
 
         if name == "sum" || name == "mean" {
             if args.len() != 1 {
                 return Err(format!("Nano: {name}() recebe 1 tensor"));
             }
-            return reduce_value(&args[0], name == "mean");
+            return reduce_value(&args[0], name == "mean", self.backend.as_ref());
         }
 
         if name == "grad" {
@@ -573,7 +585,7 @@ impl IrRuntime {
                     Op::Div => TensorOpKind::Div,
                     _ => unreachable!(),
                 };
-                Ok(Value::Tensor(tensor_elementwise(left, right, kind)?))
+                Ok(Value::Tensor(tensor_elementwise(left, right, kind, self.backend.as_ref())?))
             }
             (Value::Tensor(tensor), Value::Number(n), Op::Mul) |
             (Value::Number(n), Value::Tensor(tensor), Op::Mul) => {
@@ -682,7 +694,7 @@ fn list_shape(value: &Value) -> Result<Vec<usize>, String> {
     }
 }
 
-fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
+fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Value, String> {
     let (left, right) = match (a, b) {
         (Value::Tensor(a), Value::Tensor(b)) => (a, b),
         _ => return Err("Nano: matmul() requer Tensor, Tensor".into()),
@@ -704,7 +716,6 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
         return Err(format!("Nano: matmul() incompatível: {}x{} com {}x{}", m, k, k2, n));
     }
 
-    let backend = backend::cpu();
     let out = {
         let l = left.borrow();
         let r = right.borrow();
@@ -721,14 +732,18 @@ fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
 }
 
 
-fn tensor_elementwise(a: &TensorRef, b: &TensorRef, op: TensorOpKind) -> Result<TensorRef, String> {
+fn tensor_elementwise(
+    a: &TensorRef,
+    b: &TensorRef,
+    op: TensorOpKind,
+    backend: &dyn TensorBackend,
+) -> Result<TensorRef, String> {
     let left = a.borrow();
     let right = b.borrow();
     if left.shape != right.shape {
         return Err("Nano: Tensor elementwise requer shapes iguais".into());
     }
 
-    let backend = backend::cpu();
     let backend_op = match op {
         TensorOpKind::Add => ElementwiseOp::Add,
         TensorOpKind::Sub => ElementwiseOp::Sub,
@@ -751,13 +766,16 @@ fn tensor_elementwise(a: &TensorRef, b: &TensorRef, op: TensorOpKind) -> Result<
     )?)
 }
 
-fn reduce_value(value: &Value, mean: bool) -> Result<Value, String> {
+fn reduce_value(
+    value: &Value,
+    mean: bool,
+    backend: &dyn TensorBackend,
+) -> Result<Value, String> {
     let tensor = match value {
         Value::Tensor(t) => std::rc::Rc::clone(t),
         _ => return Err("Nano: redução requer Tensor".into()),
     };
     let borrowed = tensor.borrow();
-    let backend = backend::cpu();
     let result = backend.reduce(&borrowed.data, mean)
         .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     let op = if mean { TensorOp::Mean(std::rc::Rc::clone(&tensor)) } else { TensorOp::Sum(std::rc::Rc::clone(&tensor)) };
