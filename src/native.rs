@@ -633,6 +633,44 @@ impl NativeModule {
         Ok(())
     }
 
+    fn box_value(&mut self, slot: usize, kind: Kind) -> Result<(), String> {
+        match kind {
+            Kind::Number => {
+                self.load_stack(slot, "%xmm0");
+                self.text.push_str("    call nano_box_number@PLT\n");
+            }
+            Kind::Boolean => {
+                self.load_stack(slot, "%xmm0");
+                self.text.push_str("    call nano_box_bool@PLT\n");
+            }
+            Kind::Text => {
+                self.text.push_str(&format!(
+                    "    movq {}(%rbp), %rdi\n    call nano_box_text@PLT\n",
+                    stack_offset(slot)
+                ));
+            }
+            Kind::Function => {
+                self.text.push_str(&format!(
+                    "    movq {}(%rbp), %rdi\n    call nano_box_function@PLT\n",
+                    stack_offset(slot)
+                ));
+            }
+            Kind::Null => {
+                self.text.push_str("    call nano_box_null@PLT\n");
+            }
+            Kind::Any => {
+                self.text.push_str(&format!(
+                    "    movq {}(%rbp), %rax\n",
+                    stack_offset(slot)
+                ));
+            }
+            Kind::Unknown => {
+                return Err("Nano native: não é possível encaixotar tipo desconhecido".into());
+            }
+        }
+        Ok(())
+    }
+
     fn load_stack(&mut self, slot: usize, reg: &str) {
         self.text.push_str(&format!(
             "    movsd {}(%rbp), {reg}\n",
