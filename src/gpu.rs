@@ -28,6 +28,106 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+const TRANSPOSED_MATMUL_SHADER: &str = r#"
+struct Params {
+    m: u32, k: u32, n: u32,
+    a_transpose: u32, b_transpose: u32, _pad0: u32, _pad1: u32, _pad2: u32
+};
+@group(0) @binding(0) var<storage, read> a: array<f32>;
+@group(0) @binding(1) var<storage, read> b: array<f32>;
+@group(0) @binding(2) var<storage, read_write> out: array<f32>;
+@group(0) @binding(3) var<uniform> params: Params;
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let row = gid.y; let col = gid.x;
+    if (row >= params.m || col >= params.n) { return; }
+    var acc = 0.0;
+    for (var i = 0u; i < params.k; i = i + 1u) {
+        let ai = if (params.a_transpose == 1u) { i * params.m + row } else { row * params.k + i };
+        let bi = if (params.b_transpose == 1u) { col * params.k + i } else { i * params.n + col };
+        acc = acc + a[ai] * b[bi];
+    }
+    out[row * params.n + col] = acc;
+}
+"#;
+
+const SCALE_SHADER: &str = r#"
+struct Params { len: u32, scale: f32, _pad0: u32, _pad1: u32 };
+@group(0) @binding(0) var<storage, read> input: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.len) { return; }
+    out[i] = input[i] * params.scale;
+}
+"#;
+
+const BROADCAST_SHADER: &str = r#"
+struct Params { len: u32, scale: f32, _pad0: u32, _pad1: u32 };
+@group(0) @binding(0) var<storage, read> scalar: array<f32>;
+@group(0) @binding(1) var<storage, read_write> out: array<f32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.len) { return; }
+    out[i] = scalar[0] * params.scale;
+}
+"#;
+
+const FILL_SHADER: &str = r#"
+struct Params { len: u32, value: f32, _pad0: u32, _pad1: u32 };
+@group(0) @binding(0) var<storage, read_write> out: array<f32>;
+@group(0) @binding(1) var<uniform> params: Params;
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.len) { return; }
+    out[i] = params.value;
+}
+"#;
+
+const STEP_SHADER: &str = r#"
+struct Params { len: u32, lr: f32, _pad0: u32, _pad1: u32 };
+@group(0) @binding(0) var<storage, read_write> param: array<f32>;
+@group(0) @binding(1) var<storage, read> grad: array<f32>;
+@group(0) @binding(2) var<uniform> params: Params;
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.len) { return; }
+    param[i] = param[i] - params.lr * grad[i];
+}
+"#;
+
+const ADAM_SHADER: &str = r#"
+struct Params { len: u32, step: u32, lr: f32, _pad0: u32 };
+@group(0) @binding(0) var<storage, read_write> param: array<f32>;
+@group(0) @binding(1) var<storage, read> grad: array<f32>;
+@group(0) @binding(2) var<storage, read_write> m: array<f32>;
+@group(0) @binding(3) var<storage, read_write> v: array<f32>;
+@group(0) @binding(4) var<uniform> params: Params;
+@compute @workgroup_size(256, 1, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= params.len) { return; }
+
+    let g = grad[i];
+    let m_new = 0.9 * m[i] + 0.1 * g;
+    let v_new = 0.999 * v[i] + 0.001 * g * g;
+    m[i] = m_new;
+    v[i] = v_new;
+
+    let step_f = f32(params.step);
+    let m_hat = m_new / (1.0 - pow(0.9, step_f));
+    let v_hat = v_new / (1.0 - pow(0.999, step_f));
+    param[i] = param[i] - params.lr * m_hat / (sqrt(v_hat) + 1e-8);
+}
+"#;
+
 const FMA_SHADER: &str = r#"
 struct Params { len: u32, _pad0: u32, _pad1: u32, _pad2: u32 };
 @group(0) @binding(0) var<storage, read> left: array<f32>;
@@ -98,6 +198,12 @@ pub(crate) struct GpuBackend {
     elementwise: wgpu::ComputePipeline,
     fma: wgpu::ComputePipeline,
     reduce: wgpu::ComputePipeline,
+    transposed_matmul: wgpu::ComputePipeline,
+    scale: wgpu::ComputePipeline,
+    broadcast: wgpu::ComputePipeline,
+    fill: wgpu::ComputePipeline,
+    step: wgpu::ComputePipeline,
+    adam: wgpu::ComputePipeline,
     planner: RefCell<MemoryPlanner>,
     resident: RefCell<HashMap<u64, ResidentBuffer>>,
 }
@@ -136,11 +242,23 @@ impl GpuBackend {
         let elementwise_module = make_shader("nano-elementwise", ELEMENTWISE_SHADER);
         let fma_module = make_shader("nano-fma", FMA_SHADER);
         let reduce_module = make_shader("nano-reduce", REDUCE_SHADER);
+        let transposed_matmul_module = make_shader("nano-transposed-matmul", TRANSPOSED_MATMUL_SHADER);
+        let scale_module = make_shader("nano-scale", SCALE_SHADER);
+        let broadcast_module = make_shader("nano-broadcast", BROADCAST_SHADER);
+        let fill_module = make_shader("nano-fill", FILL_SHADER);
+        let step_module = make_shader("nano-step", STEP_SHADER);
+        let adam_module = make_shader("nano-adam", ADAM_SHADER);
 
         let matmul = make_pipeline("nano-matmul-pipeline", &matmul_module);
         let elementwise = make_pipeline("nano-elementwise-pipeline", &elementwise_module);
         let fma = make_pipeline("nano-fma-pipeline", &fma_module);
         let reduce = make_pipeline("nano-reduce-pipeline", &reduce_module);
+        let transposed_matmul = make_pipeline("nano-transposed-matmul-pipeline", &transposed_matmul_module);
+        let scale = make_pipeline("nano-scale-pipeline", &scale_module);
+        let broadcast = make_pipeline("nano-broadcast-pipeline", &broadcast_module);
+        let fill = make_pipeline("nano-fill-pipeline", &fill_module);
+        let step = make_pipeline("nano-step-pipeline", &step_module);
+        let adam = make_pipeline("nano-adam-pipeline", &adam_module);
 
         Ok(Self {
             device,
@@ -149,6 +267,12 @@ impl GpuBackend {
             elementwise,
             fma,
             reduce,
+            transposed_matmul,
+            scale,
+            broadcast,
+            fill,
+            step,
+            adam,
             planner: RefCell::new(MemoryPlanner::new()),
             resident: RefCell::new(HashMap::new()),
         })
@@ -227,6 +351,10 @@ impl GpuBackend {
         self.queue.submit(Some(command));
         self.queue.submit(Some(encoder.finish()));
         self.readback(&readback,output_len)
+    }
+
+    fn dispatch_resident_1(&self,pipeline:&wgpu::ComputePipeline,inputs:&[&wgpu::Buffer],uniform:&wgpu::Buffer,groups:u32,output:&wgpu::Buffer){
+        self.dispatch_resident(pipeline,inputs,uniform,(groups,1,1),output);
     }
 
     fn bytes_f32(data: &[f32]) -> Vec<u8> { data.iter().flat_map(|v| v.to_ne_bytes()).collect() }
@@ -424,6 +552,97 @@ impl TensorBackend for GpuBackend {
 
     fn release_tensor(&self,id:u64)->Result<(),BackendError>{
         if let Some(entry)=self.resident.borrow_mut().remove(&id){self.planner.borrow_mut().release(entry.block);}
+        Ok(())
+    }
+
+    fn fill_resident_async(&self,elements:usize,value:f32,output_id:u64)->Result<(),BackendError>{
+        let out=self.resident_buffer(output_id,elements)?;
+        let params2=self.create_buffer(&[
+            (elements as u32).to_ne_bytes().as_slice(),
+            value.to_ne_bytes().as_slice(),
+            &[0;4],
+            &[0;4],
+        ].concat(),wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident_1(&self.fill,&[],&params2,((elements as u32)+255)/256,&out);
+        drop(params);
+        Ok(())
+    }
+
+    fn scale_resident_async(&self,input_id:u64,elements:usize,scale:f32,output_id:u64)->Result<(),BackendError>{
+        let input=self.resident.borrow().get(&input_id).ok_or_else(||BackendError("tensor não está residente na GPU".into()))?.buffer.clone();
+        let out=self.resident_buffer(output_id,elements)?;
+        let bytes=[
+            (elements as u32).to_ne_bytes().as_slice(),
+            scale.to_ne_bytes().as_slice(),
+            &[0;4],&[0;4],
+        ].concat();
+        let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident_1(&self.scale,&[&input],&params,((elements as u32)+255)/256,&out);
+        Ok(())
+    }
+
+    fn broadcast_resident_async(&self,scalar_id:u64,elements:usize,scale:f32,output_id:u64)->Result<(),BackendError>{
+        let scalar=self.resident.borrow().get(&scalar_id).ok_or_else(||BackendError("escalar não está residente na GPU".into()))?.buffer.clone();
+        let out=self.resident_buffer(output_id,elements)?;
+        let bytes=[
+            (elements as u32).to_ne_bytes().as_slice(),
+            scale.to_ne_bytes().as_slice(),
+            &[0;4],&[0;4],
+        ].concat();
+        let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident_1(&self.broadcast,&[&scalar],&params,((elements as u32)+255)/256,&out);
+        Ok(())
+    }
+
+    fn matmul_transposed_resident_async(&self,a_id:u64,a_shape:&[usize],b_id:u64,b_shape:&[usize],a_transpose:bool,b_transpose:bool,output_id:u64,output_shape:&[usize])->Result<(),BackendError>{
+        if a_shape.len()!=2||b_shape.len()!=2||output_shape.len()!=2{return Err(BackendError("matmul transposto requer shapes 2D".into()));}
+        let a=self.resident.borrow().get(&a_id).ok_or_else(||BackendError("tensor A não está residente na GPU".into()))?.buffer.clone();
+        let b=self.resident.borrow().get(&b_id).ok_or_else(||BackendError("tensor B não está residente na GPU".into()))?.buffer.clone();
+        let out_elems=output_shape.iter().copied().product::<usize>();
+        let out=self.resident_buffer(output_id,out_elems)?;
+        let a_rows=a_shape[0]; let a_cols=a_shape[1];
+        let b_rows=b_shape[0]; let b_cols=b_shape[1];
+        let m=output_shape[0]; let n=output_shape[1];
+        let k=if a_transpose{a_rows}else{a_cols};
+        let k_b=if b_transpose{b_cols}else{b_rows};
+        if k!=k_b{return Err(BackendError("matmul transposto recebeu shapes incompatíveis".into()));}
+        let bytes=[
+            (m as u32).to_ne_bytes().as_slice(),
+            (k as u32).to_ne_bytes().as_slice(),
+            (n as u32).to_ne_bytes().as_slice(),
+            (if a_transpose{1u32}else{0}).to_ne_bytes().as_slice(),
+            (if b_transpose{1u32}else{0}).to_ne_bytes().as_slice(),
+            &[0;4],&[0;4],&[0;4],
+        ].concat();
+        let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident(&self.transposed_matmul,&[&a,&b],&params,(((n as u32)+7)/8,((m as u32)+7)/8,1),&out);
+        Ok(())
+    }
+
+    fn step_resident_async(&self,param_id:u64,grad_id:u64,elements:usize,lr:f32)->Result<(),BackendError>{
+        let param=self.resident.borrow().get(&param_id).ok_or_else(||BackendError("parâmetro não está residente na GPU".into()))?.buffer.clone();
+        let grad=self.resident.borrow().get(&grad_id).ok_or_else(||BackendError("gradiente não está residente na GPU".into()))?.buffer.clone();
+        let bytes=[(elements as u32).to_ne_bytes().as_slice(),lr.to_ne_bytes().as_slice(),&[0;4],&[0;4]].concat();
+        let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident_1(&self.step,&[&param,&grad],&params,((elements as u32)+255)/256,&param);
+        Ok(())
+    }
+
+    fn adam_resident_async(&self,param_id:u64,grad_id:u64,elements:usize,lr:f32,step:u32)->Result<(),BackendError>{
+        let param=self.resident.borrow().get(&param_id).ok_or_else(||BackendError("parâmetro não está residente na GPU".into()))?.buffer.clone();
+        let grad=self.resident.borrow().get(&grad_id).ok_or_else(||BackendError("gradiente não está residente na GPU".into()))?.buffer.clone();
+        let m_id=param_id.wrapping_mul(2).wrapping_add(1);
+        let v_id=param_id.wrapping_mul(2).wrapping_add(2);
+        let m=self.resident_buffer(m_id,elements)?;
+        let v=self.resident_buffer(v_id,elements)?;
+        let bytes=[
+            (elements as u32).to_ne_bytes().as_slice(),
+            step.to_ne_bytes().as_slice(),
+            lr.to_ne_bytes().as_slice(),
+            &[0;4],
+        ].concat();
+        let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
+        self.dispatch_resident(&self.adam,&[&param,&grad,&m,&v],&params,(((elements as u32)+255)/256,1,1),&param);
         Ok(())
     }
 

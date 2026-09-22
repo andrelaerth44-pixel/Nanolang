@@ -95,6 +95,24 @@ pub(crate) trait TensorBackend {
         Err(BackendError("backend não suporta execução residente assíncrona".into()))
     }
 
+    fn scale_resident_async(
+        &self, _input_id: u64, _elements: usize, _scale: f32, _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta scale residente".into()))
+    }
+
+    fn broadcast_resident_async(
+        &self, _scalar_id: u64, _elements: usize, _scale: f32, _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta broadcast residente".into()))
+    }
+
+    fn fill_resident_async(
+        &self, _elements: usize, _value: f32, _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta fill residente".into()))
+    }
+
     fn fused_mul_add(
         &self,
         left: &[f32],
@@ -131,6 +149,28 @@ pub(crate) trait TensorBackend {
         _input_id: u64, _elements: usize, _mean: bool, _output_id: u64,
     ) -> Result<(), BackendError> {
         Err(BackendError("backend não suporta redução residente assíncrona".into()))
+    }
+
+    fn matmul_transposed_resident_async(
+        &self,
+        _a_id: u64, _a_shape: &[usize],
+        _b_id: u64, _b_shape: &[usize],
+        _a_transpose: bool, _b_transpose: bool,
+        _output_id: u64, _output_shape: &[usize],
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta matmul transposto residente".into()))
+    }
+
+    fn step_resident_async(
+        &self, _param_id: u64, _grad_id: u64, _elements: usize, _lr: f32,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta step residente".into()))
+    }
+
+    fn adam_resident_async(
+        &self, _param_id: u64, _grad_id: u64, _elements: usize, _lr: f32, _step: u32,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta Adam residente".into()))
     }
 
     fn read_tensor(&self, _id: u64, _elements: usize) -> Result<Vec<f32>, BackendError> {
