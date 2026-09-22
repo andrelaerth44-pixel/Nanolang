@@ -1594,9 +1594,7 @@ fn parse_cli(
         index += 1;
     }
 
-    if matches!(command, CliCommand::BuildNative) && !native_requested {
-        return Err("Nano: use 'nano build --native [arquivo.nano]' para o backend CPU nativo".into());
-    }
+    // "build" usa o backend nativo do host; --native continua disponível como forma explícita.
     if !matches!(command, CliCommand::BuildNative) && native_requested {
         return Err("Nano: --native só é válido com 'build'".into());
     }
