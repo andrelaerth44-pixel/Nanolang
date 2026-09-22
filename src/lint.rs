@@ -118,8 +118,11 @@ fn collect_calls_stmt(stmt: &Stmt, calls: &mut HashSet<String>) {
 
 fn collect_calls_expr(expr: &Expr, calls: &mut HashSet<String>) {
     match expr {
-        Expr::Call(name, args) => {
-            calls.insert(name.clone());
+        Expr::Call(target, args) => {
+            if let Expr::Var(name) = target.as_ref() {
+                calls.insert(name.clone());
+            }
+            collect_calls_expr(target, calls);
             for arg in args {
                 collect_calls_expr(arg, calls);
             }
@@ -268,7 +271,8 @@ fn lint_expr(expr: &Expr, diagnostics: &mut Vec<Diagnostic>) {
             lint_expr(right, diagnostics);
         }
         Expr::Unary(_, inner) => lint_expr(inner, diagnostics),
-        Expr::Call(_, args) => {
+        Expr::Call(target, args) => {
+            lint_expr(target, diagnostics);
             for arg in args {
                 lint_expr(arg, diagnostics);
             }
@@ -347,7 +351,10 @@ fn used_expr(expr: &Expr, used: &mut HashSet<String>) {
         Expr::Var(name) => { used.insert(name.clone()); }
         Expr::Binary(left, _, right) => { used_expr(left, used); used_expr(right, used); }
         Expr::Unary(_, inner) => used_expr(inner, used),
-        Expr::Call(_, args) => for arg in args { used_expr(arg, used); },
+        Expr::Call(target, args) => {
+            used_expr(target, used);
+            for arg in args { used_expr(arg, used); }
+        },
         Expr::List(items) => for item in items { used_expr(item, used); },
         Expr::Object(fields) => for (_, value) in fields { used_expr(value, used); },
         Expr::Index(target, index) => { used_expr(target, used); used_expr(index, used); }
