@@ -62,6 +62,15 @@ impl NpuBackend {
                     "Nano: provider NPU rejeitou a ABI v1 ou respondeu com ABI incompatível.".into()
                 ));
             }
+            let required = ["matmul", "elementwise", "fused_mul_add", "reduce", "upload", "read", "release", "transfer"];
+            let ops = response.get("ops")
+                .and_then(Value::as_array)
+                .ok_or_else(|| BackendError("Nano: provider NPU não declarou operações suportadas.".into()))?;
+            for op in required {
+                if !ops.iter().any(|item| item.as_str() == Some(op)) {
+                    return Err(BackendError(format!("Nano: provider NPU não suporta operação obrigatória '{op}'.")));
+                }
+            }
         }
 
         Ok(backend)
