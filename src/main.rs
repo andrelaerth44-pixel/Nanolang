@@ -249,7 +249,7 @@ impl Tensor {
     ) -> Result<TensorRef, String> {
         let expected=shape.iter().copied().product::<usize>();
         if expected!=data.len(){return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}",data.len(),expected));}
-        Ok(Rc::new(RefCell::new(Self{id,storage:TensorStorage::from_f32(dtype,data),shape,dtype,requires_grad,device,op})))
+        Ok(Rc::new(RefCell::new(Self{id,storage:TensorStorage::from_f32(dtype,data),shape,dtype,requires_grad,device,op,host_valid:true})))
     }
     fn data_f32(&self) -> Vec<f32> { self.storage.to_f32() }
     fn set_data_f32(&mut self, data: Vec<f32>) { self.storage = TensorStorage::from_f32(self.dtype, data); self.host_valid = true; }
