@@ -67,6 +67,17 @@ fn main() {
                 let bshape = dims(&request["right_shape"]);
                 match (ashape.as_slice(), bshape.as_slice()) {
                     ([m, k], [k2, n]) if k == k2 => {
+                        let expected_a = m * k;
+                        let expected_b = k2 * n;
+                        if a.len() != expected_a || b.len() != expected_b {
+                            serde_json::json!({
+                                "ok": false,
+                                "error": format!(
+                                    "matmul input size mismatch: left {} (expected {}), right {} (expected {})",
+                                    a.len(), expected_a, b.len(), expected_b
+                                )
+                            })
+                        } else {
                         let mut out = vec![0.0f32; m * n];
                         for i in 0..*m {
                             for j in 0..*n {
@@ -78,6 +89,7 @@ fn main() {
                             }
                         }
                         serde_json::json!({"ok": true, "data": out})
+                        }
                     }
                     _ => serde_json::json!({"ok": false, "error": "matmul requires rank-2 compatible matrices"}),
                 }
