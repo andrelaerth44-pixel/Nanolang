@@ -1631,7 +1631,9 @@ fn pop_n(stack: &mut Vec<Value>, count: usize) -> Result<Vec<Value>, String> {
         return Err("Nano IR: stack insuficiente".into());
     }
     let start = stack.len() - count;
-    Ok(stack.drain(start..).collect())
+    let mut values: Vec<Value> = stack.drain(start..).collect();
+    values.reverse();
+    Ok(values)
 }
 
 fn binary(a: Value, op: Op, b: Value) -> Result<Value, String> {
