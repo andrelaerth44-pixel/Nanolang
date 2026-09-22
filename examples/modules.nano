@@ -1,0 +1,4 @@
+use "math.nano"
+
+print double(21)
+print square(6)
