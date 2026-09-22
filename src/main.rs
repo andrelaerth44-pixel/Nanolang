@@ -1094,6 +1094,15 @@ impl Semantic {
                     }
                     return Ok(Type::Text);
                 }
+                if name == "net_http_get" {
+                    if args.len() != 3 { return Err("Nano: net_http_get() recebe host, porta e caminho".into()); }
+                    if self.expr_type(&args[0])? != Type::Text
+                        || (self.expr_type(&args[1])? != Type::Number && self.expr_type(&args[1])? != Type::Any)
+                        || self.expr_type(&args[2])? != Type::Text {
+                        return Err("Nano: net_http_get() requer Text, Number, Text".into());
+                    }
+                    return Ok(Type::Text);
+                }
                 if name == "backend" {
                     if !args.is_empty() { return Err("Nano: backend() não recebe argumentos".into()); }
                     return Ok(Type::Text);
