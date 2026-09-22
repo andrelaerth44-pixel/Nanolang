@@ -489,7 +489,11 @@ impl Parser {
         let yes = self.block()?;
         let no = if matches!(self.peek(), Token::Else) {
             self.advance();
-            self.block()?
+            if matches!(self.peek(), Token::If) {
+                vec![self.if_stmt()?]
+            } else {
+                self.block()?
+            }
         } else {
             Vec::new()
         };
