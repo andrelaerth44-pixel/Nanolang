@@ -404,7 +404,10 @@ enum Op { Add, Sub, Mul, Div, Mod, Eq, Ne, Gt, Ge, Lt, Le, And, Or }
 
 #[derive(Debug, Clone)]
 enum Stmt {
-    Assign(String, Expr), Print(Expr), Expr(Expr),
+    Assign(String, Expr),
+    AssignIndex(Expr, Expr, Expr),
+    AssignField(Expr, String, Expr),
+    Print(Expr), Expr(Expr),
     If(Expr, Vec<Stmt>, Vec<Stmt>),
     While(Expr, Vec<Stmt>),
     For(String, Expr, Vec<Stmt>),
@@ -456,17 +459,35 @@ impl Parser {
             Token::For => self.for_stmt(),
             Token::Break => { self.advance(); Ok(Stmt::Break) }
             Token::Return => { self.advance(); Ok(Stmt::Return(self.expression()?)) }
-            Token::Ident(name) => {
-                let name = name.clone();
-                if matches!(self.tokens.get(self.pos + 1), Some(Token::Equal)) {
+            Token::Ident(_) => {
+                let target = self.expression()?;
+                if matches!(self.peek(), Token::Equal) {
                     self.advance();
-                    self.advance();
-                    Ok(Stmt::Assign(name, self.expression()?))
+                    let value = self.expression()?;
+                    match target {
+                        Expr::Var(name) => Ok(Stmt::Assign(name, value)),
+                        Expr::Index(target, index) => Ok(Stmt::AssignIndex(*target, *index, value)),
+                        Expr::Field(target, name) => Ok(Stmt::AssignField(*target, name, value)),
+                        _ => Err("Nano: lado esquerdo da atribuição não é atribuível".into()),
+                    }
                 } else {
-                    Ok(Stmt::Expr(self.expression()?))
+                    Ok(Stmt::Expr(target))
                 }
             }
-            _ => Ok(Stmt::Expr(self.expression()?)),
+            _ => {
+                let target = self.expression()?;
+                if matches!(self.peek(), Token::Equal) {
+                    self.advance();
+                    let value = self.expression()?;
+                    match target {
+                        Expr::Index(target, index) => Ok(Stmt::AssignIndex(*target, *index, value)),
+                        Expr::Field(target, name) => Ok(Stmt::AssignField(*target, name, value)),
+                        _ => Err("Nano: lado esquerdo da atribuição não é atribuível".into()),
+                    }
+                } else {
+                    Ok(Stmt::Expr(target))
+                }
+            },
         }
     }
     fn function(&mut self) -> Result<Stmt, String> {
