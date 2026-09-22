@@ -265,6 +265,52 @@ impl Compiler {
                     code.push(IrInst::Binary(Op::Add));
                 }
             }
+            Expr::Binary(left, Op::And, right) => {
+                self.compile_expr(left, code)?;
+                let left_false = code.len();
+                code.push(IrInst::JumpIfFalse(usize::MAX));
+
+                self.compile_expr(right, code)?;
+                let right_false = code.len();
+                code.push(IrInst::JumpIfFalse(usize::MAX));
+
+                code.push(IrInst::Const(Value::Boolean(true)));
+                let end_jump = code.len();
+                code.push(IrInst::Jump(usize::MAX));
+
+                let false_label = code.len();
+                code[left_false] = IrInst::JumpIfFalse(false_label);
+                code[right_false] = IrInst::JumpIfFalse(false_label);
+                code.push(IrInst::Const(Value::Boolean(false)));
+
+                let end = code.len();
+                code[end_jump] = IrInst::Jump(end);
+            }
+            Expr::Binary(left, Op::Or, right) => {
+                self.compile_expr(left, code)?;
+                let evaluate_right = code.len();
+                code.push(IrInst::JumpIfFalse(usize::MAX));
+                code.push(IrInst::Const(Value::Boolean(true)));
+                let end_jump = code.len();
+                code.push(IrInst::Jump(usize::MAX));
+
+                let right_start = code.len();
+                code[evaluate_right] = IrInst::JumpIfFalse(right_start);
+                self.compile_expr(right, code)?;
+                let right_false = code.len();
+                code.push(IrInst::JumpIfFalse(usize::MAX));
+                code.push(IrInst::Const(Value::Boolean(true)));
+                let right_end_jump = code.len();
+                code.push(IrInst::Jump(usize::MAX));
+
+                let false_label = code.len();
+                code[right_false] = IrInst::JumpIfFalse(false_label);
+                code.push(IrInst::Const(Value::Boolean(false)));
+
+                let end = code.len();
+                code[end_jump] = IrInst::Jump(end);
+                code[right_end_jump] = IrInst::Jump(end);
+            }
             Expr::Binary(left, op, right) => {
                 self.compile_expr(left, code)?;
                 self.compile_expr(right, code)?;
