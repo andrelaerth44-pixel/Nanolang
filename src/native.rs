@@ -725,7 +725,7 @@ fn analyze_stack(
                     next.pop().ok_or_else(|| format!("Nano native: chamada '{callee}' sem argumentos suficientes"))?;
                 }
                 calls.push((callee.clone(), arg_kinds));
-                next.push(function_returns.get(callee).copied().unwrap_or(Kind::Unknown));
+                next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
             }
             IrInst::CallValue(count) => {
                 if *count > 8 {
