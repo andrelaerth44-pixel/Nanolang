@@ -1900,7 +1900,7 @@ fn main() {
             process::exit(2);
         }
     };
-    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify) {
+    if matches!(command, CliCommand::PackageInit | CliCommand::PackageLock | CliCommand::PackageVerify | CliCommand::New) {
         let root = Path::new(&path);
         let result = match command {
             CliCommand::PackageInit => {
@@ -1912,9 +1912,44 @@ fn main() {
             }
             CliCommand::PackageLock => package::lock(root),
             CliCommand::PackageVerify => package::verify(root),
+            CliCommand::New => {
+                let name = root.file_name()
+                    .and_then(|v| v.to_str())
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or("nano-project");
+                package::init(root, name)
+            }
             _ => unreachable!(),
         };
         if let Err(e) = result {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if command == CliCommand::Fmt {
+        if path.is_empty() {
+            eprintln!("Nano fmt: informe um arquivo .nano");
+            process::exit(2);
+        }
+        if let Err(e) = run_sibling_tool("nano-fmt", &[path.clone()]) {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if command == CliCommand::Lsp {
+        if let Err(e) = run_sibling_tool("nano-lsp", &[]) {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        return;
+    }
+
+    if command == CliCommand::Repl {
+        if let Err(e) = run_repl() {
             eprintln!("{e}");
             process::exit(1);
         }
@@ -1998,6 +2033,11 @@ fn main() {
     let ir_program = optimizer.optimize_program(ir_program);
 
     if command == CliCommand::Check {
+        return;
+    }
+
+    if command == CliCommand::Debug {
+        print_debug_ir(&ir_program);
         return;
     }
 
@@ -2106,6 +2146,24 @@ mod tests {
     fn cli_rejects_unknown_options() {
         let args = vec!["nano".into(), "run".into(), "--wat".into()];
         assert!(parse_cli(&args).is_err());
+    }
+
+    #[test]
+    fn cli_supports_tooling_commands() {
+        for (name, expected) in [
+            ("fmt", CliCommand::Fmt),
+            ("lsp", CliCommand::Lsp),
+            ("repl", CliCommand::Repl),
+            ("debug", CliCommand::Debug),
+            ("new", CliCommand::New),
+        ] {
+            let mut args = vec!["nano".into(), name.into()];
+            if name == "fmt" || name == "debug" || name == "new" {
+                args.push("sample.nano".into());
+            }
+            let (command, _, _, _, _) = parse_cli(&args).unwrap();
+            assert_eq!(command, expected);
+        }
     }
 
     #[test]
