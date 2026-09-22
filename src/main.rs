@@ -2191,25 +2191,45 @@ fn collect_nano_files(dir: &Path, output: &mut Vec<std::path::PathBuf>) -> Resul
 
 fn run_selfhost_native(source_path: &str, output_path: &str) -> Result<(), String> {
     let exe = env::current_exe().map_err(|e| format!("Nano selfhost: executável atual: {e}"))?;
-    let ir_path = env::temp_dir().join(format!("nano-selfhost-{}-{}.ir", process::id(), crate::next_tensor_id()));
+    let c_path = env::temp_dir().join(format!(
+        "nano-selfhost-{}-{}.c",
+        process::id(),
+        crate::next_tensor_id()
+    ));
+    let runtime_path = env::current_dir()
+        .map_err(|e| format!("Nano selfhost: diretório atual: {e}"))?
+        .join("src")
+        .join("native_runtime.c");
+
     let status = Command::new(&exe)
         .arg("run")
         .arg("selfhost/bootstrap.nano")
         .env("NANO_SELFHOST_INPUT", source_path)
-        .env("NANO_SELFHOST_OUTPUT", &ir_path)
+        .env("NANO_SELFHOST_C", &c_path)
+        .env("NANO_SELFHOST_RUNTIME", &runtime_path)
         .status()
         .map_err(|e| format!("Nano selfhost: não foi possível executar bootstrap: {e}"))?;
+
     if !status.success() {
-        let _ = fs::remove_file(&ir_path);
+        let _ = fs::remove_file(&c_path);
         return Err(format!("Nano selfhost: bootstrap terminou com código {:?}", status.code()));
     }
 
-    let text = fs::read_to_string(&ir_path)
-        .map_err(|e| format!("Nano selfhost: não foi possível ler IR: {e}"))?;
-    let _ = fs::remove_file(&ir_path);
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".into());
+    let status = Command::new(&cc)
+        .arg(&c_path)
+        .arg("-o")
+        .arg(output_path)
+        .arg("-lm")
+        .status()
+        .map_err(|e| format!("Nano selfhost: não foi possível executar '{cc}': {e}"))?;
 
-    let program = selfhost_native::parse(&text)?;
-    native::build(&program, Path::new(output_path))?;
+    let _ = fs::remove_file(&c_path);
+
+    if !status.success() {
+        return Err(format!("Nano selfhost: compilador C '{cc}' terminou com código {:?}", status.code()));
+    }
+
     Ok(())
 }
 
