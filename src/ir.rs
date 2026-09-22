@@ -971,19 +971,42 @@ fn tensor_elementwise(
         TensorOpKind::Mul => ElementwiseOp::Mul,
         TensorOpKind::Div => ElementwiseOp::Div,
     };
-    let left_id=left.id;let right_id=right.id;let left_data=left.data_f32();let right_data=right.data_f32();let shape=left.shape.clone();
-    let output_id=super::next_tensor_id();
-    let data=backend.elementwise_resident(left_id,&left_data,right_id,&right_data,&shape,backend_op,output_id)
-        .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
-    let requires_grad=left.requires_grad||right.requires_grad;let dtype=DType::promote(left.dtype,right.dtype);
-    drop(left);drop(right);
-    Ok(super::Tensor::derived_dtype_on_with_id(output_id,data,shape,requires_grad,backend.kind(),dtype,TensorOp::Elementwise(op,std::rc::Rc::clone(a),std::rc::Rc::clone(b))))
+    let left_id = left.id;
+    let right_id = right.id;
+    let left_data = left.data_f32();
+    let right_data = right.data_f32();
+    let shape = left.shape.clone();
+    let output_id = super::next_tensor_id();
+    let data = backend
+        .elementwise_resident(
+            left_id,
+            &left_data,
+            right_id,
+            &right_data,
+            &shape,
+            backend_op,
+            output_id,
+        )
+        .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
+
+    let requires_grad = left.requires_grad || right.requires_grad;
+    let dtype = DType::promote(left.dtype, right.dtype);
+    drop(left);
+    drop(right);
+
+    Ok(super::Tensor::derived_dtype_on_with_id(
+        output_id,
+        data,
         shape,
         requires_grad,
         backend.kind(),
         dtype,
-        TensorOp::Elementwise(op, std::rc::Rc::clone(a), std::rc::Rc::clone(b)),
-    )?)
+        TensorOp::Elementwise(
+            op,
+            std::rc::Rc::clone(a),
+            std::rc::Rc::clone(b),
+        ),
+    ))
 }
 
 fn reduce_value(
