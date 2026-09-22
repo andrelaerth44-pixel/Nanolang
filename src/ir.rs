@@ -2355,7 +2355,12 @@ impl IrRuntime {
 
             let mut compiler = Compiler::new();
             let module = compiler.compile(&program)?;
-            self.functions.extend(module.functions);
+            // Keep functions already visible in the importing program. This makes
+            // the root program's entrypoint win over helper-module test entrypoints
+            // such as selfhost/*::main, while still registering new exports.
+            for (name, function) in module.functions {
+                self.functions.entry(name).or_insert(function);
+            }
 
             let _ = self.execute_code(&module.code)?;
             Ok(())
