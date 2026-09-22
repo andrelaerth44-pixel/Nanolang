@@ -32,9 +32,9 @@ A camada atual fornece TCP direto. HTTP de alto nível pode ser construído sobr
 
 ## UI
 
-ui_window, ui_set_title, ui_close, ui_poll_event.
+ui_window, ui_set_title, ui_close, ui_poll_event, ui_wait_event.
 
-A implementação atual cria uma janela desktop nativa e entrega eventos básicos (created, resized, close_requested, closed).
+A implementação atual cria uma janela desktop nativa e entrega eventos de criação, resize, teclado, mouse, modificadores e fechamento. `ui_poll_event` é não bloqueante; `ui_wait_event` aguarda o próximo evento.
 
 ## Módulos
 
