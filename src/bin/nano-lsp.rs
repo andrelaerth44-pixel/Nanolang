@@ -289,6 +289,10 @@ fn completion(server: &Server, request: &Value) -> Value {
                 ("wait", "aguarda processo"),
                 ("output", "captura stdout/stderr"),
             ],
+            "std.json" => vec![
+                ("encode", "converte valor para JSON"),
+                ("decode", "converte JSON para valor Nano"),
+            ],
             "std.os" => vec![
                 ("cwd", "diretório atual"),
                 ("args", "argumentos do processo"),
