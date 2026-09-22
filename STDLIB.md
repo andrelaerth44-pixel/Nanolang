@@ -2,7 +2,7 @@
 
 ## Core
 
-len, range, print, to_text, to_number, upper, lower, trim, contains, starts_with, ends_with, replace, substring, char_at, split, join, append.
+len, range, print, to_text, to_number, upper, lower, trim, contains, starts_with, ends_with, replace, substring, char_at, split, join, append, abs, sqrt, floor, ceil, round, sin, cos, tan, exp, log, pow, min, max.
 
 As operações de listas e objetos também podem usar indexação (lista[n], objeto["chave"]) e campos (objeto.campo).
 
