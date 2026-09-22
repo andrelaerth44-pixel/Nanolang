@@ -63,7 +63,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 "#;
 
 const REDUCE_SHADER: &str = r#"
-struct Params { len: u32, _pad0: u32, _pad1: u32, _pad2: u32 };
+struct Params { len: u32, mean: u32, _pad1: u32, _pad2: u32 };
 @group(0) @binding(0) var<storage, read> input: array<f32>;
 @group(0) @binding(1) var<storage, read_write> out: array<f32>;
 @group(0) @binding(2) var<uniform> params: Params;
@@ -78,7 +78,10 @@ fn main(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(global_invocation
         if (lane < stride) { scratch[lane] = scratch[lane] + scratch[lane + stride]; }
         workgroupBarrier(); stride = stride / 2u;
     }
-    if (lane == 0u) { out[0] = scratch[0]; }
+    if (lane == 0u) {
+        if (params.mean == 1u) { out[0] = scratch[0] / f32(params.len); }
+        else { out[0] = scratch[0]; }
+    }
 }
 "#;
 
@@ -427,7 +430,7 @@ impl TensorBackend for GpuBackend {
     fn reduce_resident_async(&self,input_id:u64,elements:usize,_mean:bool,output_id:u64)->Result<(),BackendError>{
         let input=self.resident.borrow().get(&input_id).ok_or_else(||BackendError("tensor de redução não está residente na GPU".into()))?.buffer.clone();
         let output=self.resident_buffer(output_id,1)?;
-        let params=self.create_buffer(&Self::bytes_u32(&[elements as u32,0,0,0]),wgpu::BufferUsages::UNIFORM);
+        let params=self.create_buffer(&Self::bytes_u32(&[elements as u32,if mean{1}else{0},0,0]),wgpu::BufferUsages::UNIFORM);
         self.dispatch_resident(&self.reduce,&[&input],&params,(1,1,1),&output);
         Ok(())
     }
@@ -448,7 +451,7 @@ impl TensorBackend for GpuBackend {
     fn reduce(&self,data:&[f32],mean:bool)->Result<f32,BackendError>{
         if data.is_empty(){return Ok(0.0);}
         let input=self.create_buffer(&Self::bytes_f32(data),wgpu::BufferUsages::STORAGE);
-        let params=self.create_buffer(&Self::bytes_u32(&[data.len() as u32,0,0,0]),wgpu::BufferUsages::UNIFORM);
+        let params=self.create_buffer(&Self::bytes_u32(&[data.len() as u32,if mean{1}else{0},0,0]),wgpu::BufferUsages::UNIFORM);
         let sum=self.dispatch(&self.reduce,&[&input],&params,(1,1,1),1)?[0];
         Ok(if mean{sum/data.len() as f32}else{sum})
     }
