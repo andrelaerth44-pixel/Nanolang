@@ -1,0 +1,29 @@
+# Nano self-host bootstrap.
+# O bootstrap usa o runtime Nano para carregar lexer, parser e compiler
+# e produzir o IR textual do próprio compilador.
+
+use "selfhost/lexer.nano"
+use "selfhost/parser.nano"
+use "selfhost/compiler.nano"
+
+function compile_file(path) {
+    tokens = lex(path)
+    ast = parse_program(tokens)
+
+    if !ast.ok {
+        return {ok: false, stage: "parser", error: ast.error, ir: ""}
+    }
+
+    ir = emit_program(ast.node)
+    return {ok: true, stage: "compiler", error: "", ir: join(ir, "\n")}
+}
+
+function main() {
+    result = compile_file("main.nano")
+
+    if result.ok {
+        print result.ir
+    } else {
+        print result.stage + ": " + result.error
+    }
+}
