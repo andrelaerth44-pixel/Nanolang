@@ -47,3 +47,8 @@ assert(text_value == "nano_lang", "replace-argument-order")
 
 tensor_value = tensor([1, 2, 3, 4], [2, 2])
 assert(shape(tensor_value) == [2, 2], "tensor-argument-order")
+
+function text_identity(value) {
+    return value
+}
+assert(text_identity("nano") == "nano", "text-parameter")
