@@ -29,7 +29,7 @@ pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
         function_returns.insert(name.clone(), Kind::Unknown);
     }
 
-    for _ in 0..16 {
+    for _ in 0..64 {
         let mut changed = false;
 
         for (name, function) in &ir.functions {
@@ -657,26 +657,31 @@ fn analyze_stack(
                 let left = next.pop().ok_or_else(|| format!("Nano native: binary sem esquerdo em '{name}'"))?;
                 match op {
                     Op::Eq | Op::Ne => {
-                        if left != right || !matches!(left, Kind::Number | Kind::Boolean) {
+                        if left == Kind::Unknown || right == Kind::Unknown {
+                            next.push(Kind::Boolean);
+                        } else if left != right || !matches!(left, Kind::Number | Kind::Boolean) {
                             return Err(format!("Nano native: comparação {:?} exige valores compatíveis", op));
+                        } else {
+                            next.push(Kind::Boolean);
                         }
-                        next.push(Kind::Boolean);
                     }
                     Op::Gt | Op::Ge | Op::Lt | Op::Le => {
-                        if left != Kind::Number || right != Kind::Number {
+                        if (left != Kind::Unknown && left != Kind::Number)
+                            || (right != Kind::Unknown && right != Kind::Number) {
                             return Err(format!("Nano native: comparação {:?} exige Numbers", op));
                         }
                         next.push(Kind::Boolean);
                     }
                     Op::And | Op::Or => {
-                        if !matches!(left, Kind::Number | Kind::Boolean)
-                            || !matches!(right, Kind::Number | Kind::Boolean) {
+                        if (!matches!(left, Kind::Unknown | Kind::Number | Kind::Boolean))
+                            || (!matches!(right, Kind::Unknown | Kind::Number | Kind::Boolean)) {
                             return Err(format!("Nano native: lógica {:?} exige valores booleanos ou numéricos", op));
                         }
                         next.push(Kind::Boolean);
                     }
                     _ => {
-                        if left != Kind::Number || right != Kind::Number {
+                        if (left != Kind::Unknown && left != Kind::Number)
+                            || (right != Kind::Unknown && right != Kind::Number) {
                             return Err(format!("Nano native: operação {:?} exige Numbers", op));
                         }
                         next.push(Kind::Number);
@@ -687,7 +692,7 @@ fn analyze_stack(
                 let value = next.pop().ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
                 match op {
                     crate::UnaryOp::Neg => {
-                        if value != Kind::Number {
+                        if value != Kind::Unknown && value != Kind::Number {
                             return Err(format!("Nano native: operador {:?} exige Number", op));
                         }
                         next.push(Kind::Number);
@@ -703,7 +708,7 @@ fn analyze_stack(
             IrInst::FusedMulAdd => {
                 for _ in 0..3 {
                     let value = next.pop().ok_or_else(|| format!("Nano native: FMA inválido em '{name}'"))?;
-                    if value != Kind::Number {
+                    if value != Kind::Unknown && value != Kind::Number {
                         return Err(format!("Nano native: FMA exige Numbers em '{name}'"));
                     }
                 }
