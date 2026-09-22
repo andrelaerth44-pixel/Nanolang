@@ -302,6 +302,7 @@ pub(crate) struct IrRuntime {
     tcp_listeners: HashMap<u64, TcpListener>,
     children: HashMap<u64, Child>,
     tasks: HashMap<u64, JoinHandle<Result<i32, String>>>,
+    ui_windows: HashMap<u64, ui::UiHandle>,
 }
 
 impl IrRuntime {
@@ -343,6 +344,7 @@ impl IrRuntime {
             tcp_listeners: HashMap::new(),
             children: HashMap::new(),
             tasks: HashMap::new(),
+            ui_windows: HashMap::new(),
         })
     }
 
@@ -768,6 +770,49 @@ impl IrRuntime {
             };
             items.push(args[1].clone());
             return Ok(Value::List(items));
+        }
+
+        if name == "ui_window" {
+            if args.len() != 3 { return Err("Nano: ui_window() recebe título, largura e altura".into()); }
+            let title = text_arg(&args[0], "título")?;
+            let width = number_arg(&args[1], "largura")?;
+            let height = number_arg(&args[2], "altura")?;
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            let window = ui::spawn(title, width, height)?;
+            self.ui_windows.insert(handle, window);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "ui_set_title" {
+            if args.len() != 2 { return Err("Nano: ui_set_title() recebe handle e título".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let title = text_arg(&args[1], "título")?;
+            let window = self.ui_windows.get(&handle)
+                .ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            window.command.send(ui::UiCommand::SetTitle(title))
+                .map_err(|_| "Nano: thread da UI não está disponível".to_string())?;
+            return Ok(Value::Null);
+        }
+
+        if name == "ui_close" {
+            if args.len() != 1 { return Err("Nano: ui_close() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            if let Some(window) = self.ui_windows.remove(&handle) {
+                let _ = window.command.send(ui::UiCommand::Close);
+            }
+            return Ok(Value::Null);
+        }
+
+        if name == "ui_poll_event" {
+            if args.len() != 1 { return Err("Nano: ui_poll_event() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let window = self.ui_windows.get(&handle)
+                .ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            return Ok(match window.events.try_recv() {
+                Ok(event) => Value::Text(event),
+                Err(_) => Value::Text(String::new()),
+            });
         }
 
         if name == "len" {
