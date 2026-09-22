@@ -7,6 +7,7 @@ use pollster::block_on;
 use wgpu::util::DeviceExt;
 
 use crate::backend::{BackendError, BackendKind, ElementwiseOp, TensorBackend};
+use crate::backend::TensorBackend;
 use crate::dtype::DType;
 use crate::memory::MemoryPlanner;
 
