@@ -142,3 +142,52 @@ impl TensorBackend for CpuBackend {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_backend_names() {
+        assert_eq!(BackendKind::parse("cpu").unwrap(), BackendKind::Cpu);
+        assert_eq!(BackendKind::parse("GPU").unwrap(), BackendKind::Gpu);
+        assert!(BackendKind::parse("npu").is_err());
+    }
+
+    #[test]
+    fn cpu_matmul_is_correct() {
+        let backend = CpuBackend;
+        let out = backend
+            .matmul(
+                &[1.0, 2.0, 3.0, 4.0],
+                &[2, 2],
+                &[5.0, 6.0, 7.0, 8.0],
+                &[2, 2],
+            )
+            .unwrap();
+        assert_eq!(out, vec![19.0, 22.0, 43.0, 50.0]);
+    }
+
+    #[test]
+    fn cpu_elementwise_and_reduce_are_correct() {
+        let backend = CpuBackend;
+        let add = backend
+            .elementwise(
+                &[1.0, 2.0, 3.0],
+                &[4.0, 5.0, 6.0],
+                &[3],
+                ElementwiseOp::Add,
+            )
+            .unwrap();
+        assert_eq!(add, vec![5.0, 7.0, 9.0]);
+
+        assert_eq!(backend.reduce(&[2.0, 4.0, 6.0], false).unwrap(), 12.0);
+        assert_eq!(backend.reduce(&[2.0, 4.0, 6.0], true).unwrap(), 4.0);
+    }
+
+    #[test]
+    fn gpu_backend_is_explicitly_unavailable() {
+        let error = create(BackendKind::Gpu).unwrap_err();
+        assert!(error.to_string().contains("GPU"));
+    }
+}
