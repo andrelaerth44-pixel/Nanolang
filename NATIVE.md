@@ -21,3 +21,7 @@ O backend GPU usa wgpu e possui execução residente para operações de tensor 
 O backend NPU usa um provider externo com ABI v1. A interface está em NPU.md.
 
 O Nano não apresenta NPU como disponível quando não há provider configurado.
+
+## Function values e Text
+
+O backend x86-64 também materializa valores Function como ponteiros de função e Text como ponteiros para strings estáticas/retornos escalares. Chamadas indiretas escalares são emitidas como chamadas nativas via ponteiro.
