@@ -80,6 +80,13 @@ jobs:
           printf 'native-param\nanswer\n42\nanswer\n' > /tmp/nano-native-text-param.expected
           diff -u /tmp/nano-native-text-param.expected /tmp/nano-native-text-param.out
 
+      - name: Native math builtins
+        run: |
+          cargo run --quiet --bin nano -- build --native examples/native_math.nano -o /tmp/nano-native-math
+          /tmp/nano-native-math > /tmp/nano-native-math.out
+          printf '4\n3\n3\n4\n4\n8\n2\n5\n' > /tmp/nano-native-math.expected
+          diff -u /tmp/nano-native-math.expected /tmp/nano-native-math.out
+
       - name: Native null and truthiness
         run: |
           cargo run --quiet --bin nano -- build --native examples/native_null.nano -o /tmp/nano-native-null
