@@ -1,3 +1,5 @@
+mod ir;
+
 use std::{env, fs, process};
 use std::collections::HashMap;
 
@@ -611,136 +613,6 @@ impl Semantic {
     }
 }
 
-struct Runtime {
-    vars: HashMap<String, Value>,
-    functions: HashMap<String, (Vec<String>, Vec<Stmt>)>,
-}
-
-impl Runtime {
-    fn new() -> Self { Self { vars: HashMap::new(), functions: HashMap::new() } }
-
-    fn run(&mut self, program: &[Stmt]) -> Result<(), String> {
-        for stmt in program {
-            if self.exec(stmt)?.is_some() { break; }
-        }
-        Ok(())
-    }
-
-    fn exec(&mut self, stmt: &Stmt) -> Result<Option<Value>, String> {
-        match stmt {
-            Stmt::Use(path) => {
-                let source = fs::read_to_string(path)
-                    .map_err(|e| format!("Nano: não foi possível carregar módulo '{path}': {e}"))?;
-                let tokens = Lexer::new(&source).lex()?;
-                let program = Parser::new(tokens).program()?;
-                for item in &program {
-                    if let Some(v) = self.exec(item)? { return Ok(Some(v)); }
-                }
-                Ok(None)
-            }
-            Stmt::Assign(n, e) => { let v = self.eval(e)?; self.vars.insert(n.clone(), v); Ok(None) }
-            Stmt::Print(e) => { println!("{}", self.eval(e)?.show()); Ok(None) }
-            Stmt::Expr(e) => { self.eval(e)?; Ok(None) }
-            Stmt::Function(n, p, b) => { self.functions.insert(n.clone(), (p.clone(), b.clone())); Ok(None) }
-            Stmt::Return(e) => Ok(Some(self.eval(e)?)),
-            Stmt::If(c, yes, no) => {
-                let body = if self.eval(c)?.truthy() { yes } else { no };
-                for s in body {
-                    if let Some(v) = self.exec(s)? { return Ok(Some(v)); }
-                }
-                Ok(None)
-            }
-        }
-    }
-
-    fn eval(&mut self, e: &Expr) -> Result<Value, String> {
-        match e {
-            Expr::Value(v) => Ok(v.clone()),
-            Expr::Var(n) => self.vars.get(n).cloned().ok_or_else(|| format!("Nano: variável '{n}' não definida")),
-            Expr::List(items) => {
-                let mut values = Vec::new();
-                for item in items { values.push(self.eval(item)?); }
-                Ok(Value::List(values))
-            }
-            Expr::Object(fields) => {
-                let mut values = HashMap::new();
-                for (key, value) in fields { values.insert(key.clone(), self.eval(value)?); }
-                Ok(Value::Object(values))
-            }
-            Expr::Binary(a, op, b) => {
-                let left = self.eval(a)?;
-                let right = self.eval(b)?;
-                self.binary(left, *op, right)
-            }
-            Expr::Field(target, name) => match self.eval(target)? {
-                Value::Object(values) => values.get(name).cloned()
-                    .ok_or_else(|| format!("Nano: campo '{name}' não existe")),
-                _ => Err("Nano: '.' requer um objeto".into()),
-            },
-            Expr::Index(target, index) => {
-                let value = self.eval(target)?;
-                let key = self.eval(index)?;
-                match (value, key) {
-                    (Value::List(values), Value::Number(n)) => {
-                        if n < 0.0 || n.fract() != 0.0 { return Err("Nano: índice deve ser um número inteiro".into()); }
-                        values.get(n as usize).cloned().ok_or_else(|| "Nano: índice fora do limite".into())
-                    }
-                    (Value::Object(values), Value::Text(key)) => values.get(&key).cloned()
-                        .ok_or_else(|| format!("Nano: chave '{key}' não existe")),
-                    _ => Err("Nano: indexação requer lista[número] ou objeto[texto]".into()),
-                }
-            }
-            Expr::Call(name, args) => {
-                if name == "len" {
-                    if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
-                    return match self.eval(&args[0])? {
-                        Value::Text(v) => Ok(Value::Number(v.chars().count() as f64)),
-                        Value::List(v) => Ok(Value::Number(v.len() as f64)),
-                        Value::Object(v) => Ok(Value::Number(v.len() as f64)),
-                        _ => Err("Nano: len() requer texto, lista ou objeto".into()),
-                    };
-                }
-                let (params, body) = self.functions.get(name).cloned()
-                    .ok_or_else(|| format!("Nano: função '{name}' não definida"))?;
-                if params.len() != args.len() { return Err(format!("Nano: '{name}' esperava {} argumentos", params.len())); }
-                let saved = self.vars.clone();
-                for (p, a) in params.iter().zip(args) {
-                    let v = self.eval(a)?;
-                    self.vars.insert(p.clone(), v);
-                }
-                let mut result = Value::Null;
-                for s in &body {
-                    if let Some(v) = self.exec(s)? { result = v; break; }
-                }
-                self.vars = saved;
-                Ok(result)
-            }
-        }
-    }
-
-    fn binary(&self, a: Value, op: Op, b: Value) -> Result<Value, String> {
-        match op {
-            Op::Add => match (a, b) {
-                (Value::Number(x), Value::Number(y)) => Ok(Value::Number(x + y)),
-                (Value::Text(x), Value::Text(y)) => Ok(Value::Text(x + &y)),
-                (Value::Text(x), y) => Ok(Value::Text(x + &y.show())),
-                (x, Value::Text(y)) => Ok(Value::Text(x.show() + &y)),
-                (Value::List(mut x), Value::List(y)) => { x.extend(y); Ok(Value::List(x)) },
-                _ => Err("Nano: '+' requer números, texto ou listas compatíveis".into()),
-            },
-            Op::Sub => num(a,b,|x,y| x-y),
-            Op::Mul => num(a,b,|x,y| x*y),
-            Op::Div => num(a,b,|x,y| x/y),
-            Op::Eq => Ok(Value::Boolean(a == b)),
-            Op::Ne => Ok(Value::Boolean(a != b)),
-            Op::Gt => cmp(a,b,|x,y| x>y),
-            Op::Ge => cmp(a,b,|x,y| x>=y),
-            Op::Lt => cmp(a,b,|x,y| x<y),
-            Op::Le => cmp(a,b,|x,y| x<=y),
-        }
-    }
-}
-
 fn num(a: Value, b: Value, f: fn(f64,f64)->f64) -> Result<Value,String> {
     match (a,b) {
         (Value::Number(x), Value::Number(y)) => Ok(Value::Number(f(x,y))),
@@ -784,7 +656,16 @@ fn main() {
         process::exit(1);
     }
 
-    if let Err(e) = Runtime::new().run(&program) {
+    let mut compiler = ir::Compiler::new();
+    let ir_program = match compiler.compile(&program) {
+        Ok(program) => program,
+        Err(e) => {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+    };
+
+    if let Err(e) = ir::IrRuntime::new().run(&ir_program) {
         eprintln!("{e}");
         process::exit(1);
     }
