@@ -733,7 +733,7 @@ fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Va
             .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?
     };
 
-    Ok(Value::Tensor(super::Tensor::derived(
+    Ok(Value::Tensor(super::Tensor::derived_on(
         out,
         vec![m, n],
         requires_grad,
@@ -778,7 +778,7 @@ fn tensor_elementwise(
     drop(left);
     drop(right);
 
-    Ok(super::Tensor::derived(
+    Ok(super::Tensor::derived_on(
         data,
         shape,
         requires_grad,
