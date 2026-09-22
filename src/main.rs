@@ -110,9 +110,33 @@ impl Lexer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+struct Tensor {
+    data: Vec<f32>,
+    shape: Vec<usize>,
+}
+
+impl Tensor {
+    fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, String> {
+        let expected = shape.iter().copied().product::<usize>();
+        if expected != data.len() {
+            return Err(format!(
+                "Nano: tensor tem {} valores, mas a forma exige {}",
+                data.len(), expected
+            ));
+        }
+        Ok(Self { data, shape })
+    }
+
+    fn show(&self) -> String {
+        format!("tensor(shape={:?})", self.shape)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 enum Value {
     Number(f64), Text(String), Boolean(bool),
-    List(Vec<Value>), Object(HashMap<String, Value>), Null
+    List(Vec<Value>), Object(HashMap<String, Value>), Tensor(Tensor), Null
 }
 
 impl Value {
@@ -123,6 +147,7 @@ impl Value {
             Self::Text(v) => !v.is_empty(),
             Self::List(v) => !v.is_empty(),
             Self::Object(v) => !v.is_empty(),
+            Self::Tensor(v) => !v.data.is_empty(),
             Self::Null => false,
         }
     }
@@ -138,6 +163,7 @@ impl Value {
                 items.sort();
                 format!("{{{}}}", items.join(", "))
             }
+            Self::Tensor(v) => v.show(),
             Self::Null => "null".into(),
         }
     }
@@ -145,7 +171,7 @@ impl Value {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Type {
-    Number, Text, Boolean, List, Object, Null, Any,
+    Number, Text, Boolean, List, Object, Tensor, Null, Any,
 }
 
 impl Type {
@@ -156,6 +182,7 @@ impl Type {
             Self::Boolean => "Boolean",
             Self::List => "List",
             Self::Object => "Object",
+            Self::Tensor => "Tensor",
             Self::Null => "Null",
             Self::Any => "Any",
         }
@@ -507,6 +534,7 @@ impl Semantic {
                 Value::Boolean(_) => Type::Boolean,
                 Value::List(_) => Type::List,
                 Value::Object(_) => Type::Object,
+                Value::Tensor(_) => Type::Tensor,
                 Value::Null => Type::Null,
             }),
             Expr::Var(name) => self.vars.get(name).copied().ok_or_else(|| format!("Nano: variável '{name}' não definida")),
@@ -568,7 +596,14 @@ impl Semantic {
                             Err(format!("Nano: Object requer chave Text, recebido {}", index_type.name()))
                         }
                     }
-                    _ => Err(format!("Nano: indexação requer List ou Object, recebido {}", target_type.name())),
+                    Type::Tensor => {
+                        if index_type == Type::Number || index_type == Type::Any {
+                            Ok(Type::Any)
+                        } else {
+                            Err(format!("Nano: Tensor requer índice Number, recebido {}", index_type.name()))
+                        }
+                    }
+                    _ => Err(format!("Nano: indexação requer List, Object ou Tensor, recebido {}", target_type.name())),
                 }
             }
             Expr::Call(name, args) => {
@@ -576,6 +611,37 @@ impl Semantic {
                 if name == "len" {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
                     return Ok(Type::Number);
+                }
+                if name == "tensor" {
+                    if args.len() != 2 { return Err("Nano: tensor() recebe dados e shape".into()); }
+                    if args.iter().any(|arg| self.expr_type(arg)? != Type::List) {
+                        return Err("Nano: tensor() requer lista de dados e lista de shape".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
+                if name == "zeros" {
+                    if args.len() != 1 { return Err("Nano: zeros() recebe shape".into()); }
+                    if self.expr_type(&args[0])? != Type::List {
+                        return Err("Nano: zeros() requer lista de shape".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
+                if name == "shape" {
+                    if args.len() != 1 { return Err("Nano: shape() recebe 1 tensor".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Tensor && ty != Type::Any {
+                        return Err(format!("Nano: shape() requer Tensor, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::List);
+                }
+                if name == "matmul" {
+                    if args.len() != 2 { return Err("Nano: matmul() recebe 2 tensores".into()); }
+                    let left = self.expr_type(&args[0])?;
+                    let right = self.expr_type(&args[1])?;
+                    if (left != Type::Tensor && left != Type::Any) || (right != Type::Tensor && right != Type::Any) {
+                        return Err("Nano: matmul() requer Tensor, Tensor".into());
+                    }
+                    return Ok(Type::Tensor);
                 }
                 match self.functions.get(name) {
                     Some((expected, return_type)) if *expected != args.len() => {
