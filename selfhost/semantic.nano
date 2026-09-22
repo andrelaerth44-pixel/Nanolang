@@ -1,0 +1,152 @@
+# Nano self-host semantic validator v0.1
+# Valida a forma estrutural da AST antes da emissão do IR.
+
+function fail(message) {
+    return {ok: false, error: message}
+}
+
+function good() {
+    return {ok: true, error: ""}
+}
+
+function validate_expr(node) {
+    if node.kind == "number" || node.kind == "string" || node.kind == "boolean" || node.kind == "null" {
+        return good()
+    }
+
+    if node.kind == "ident" {
+        if node.name == "" { return fail("identificador vazio") }
+        return good()
+    }
+
+    if node.kind == "unary" {
+        return validate_expr(node.value)
+    }
+
+    if node.kind == "binary" {
+        left = validate_expr(node.left)
+        if !left.ok { return left }
+        return validate_expr(node.right)
+    }
+
+    if node.kind == "call" {
+        target = validate_expr(node.target)
+        if !target.ok { return target }
+        for arg in node.args {
+            checked = validate_expr(arg)
+            if !checked.ok { return checked }
+        }
+        return good()
+    }
+
+    if node.kind == "list" {
+        for item in node.items {
+            checked = validate_expr(item)
+            if !checked.ok { return checked }
+        }
+        return good()
+    }
+
+    if node.kind == "object" {
+        for field in node.fields {
+            checked = validate_expr(field.value)
+            if !checked.ok { return checked }
+        }
+        return good()
+    }
+
+    if node.kind == "index" {
+        checked = validate_expr(node.target)
+        if !checked.ok { return checked }
+        return validate_expr(node.index)
+    }
+
+    if node.kind == "field" {
+        checked = validate_expr(node.target)
+        if !checked.ok { return checked }
+        if node.name == "" { return fail("campo vazio") }
+        return good()
+    }
+
+    return fail("expressão desconhecida: " + node.kind)
+}
+
+function validate_block(block) {
+    if block.kind != "block" { return fail("bloco inválido") }
+    for stmt in block.body {
+        checked = validate_stmt(stmt)
+        if !checked.ok { return checked }
+    }
+    return good()
+}
+
+function validate_stmt(stmt) {
+    if stmt.kind == "assign" {
+        return validate_expr(stmt.value)
+    }
+
+    if stmt.kind == "assign_index" {
+        checked = validate_expr(stmt.target)
+        if !checked.ok { return checked }
+        checked = validate_expr(stmt.index)
+        if !checked.ok { return checked }
+        return validate_expr(stmt.value)
+    }
+
+    if stmt.kind == "assign_field" {
+        checked = validate_expr(stmt.target)
+        if !checked.ok { return checked }
+        if stmt.name == "" { return fail("campo de atribuição vazio") }
+        return validate_expr(stmt.value)
+    }
+
+    if stmt.kind == "expr" || stmt.kind == "print" || stmt.kind == "return" {
+        return validate_expr(stmt.value)
+    }
+
+    if stmt.kind == "break" {
+        return good()
+    }
+
+    if stmt.kind == "use" {
+        if stmt.path == "" { return fail("use sem caminho") }
+        return good()
+    }
+
+    if stmt.kind == "if" {
+        checked = validate_expr(stmt.condition)
+        if !checked.ok { return checked }
+        checked = validate_block(stmt.yes)
+        if !checked.ok { return checked }
+        return validate_block(stmt.no)
+    }
+
+    if stmt.kind == "while" {
+        checked = validate_expr(stmt.condition)
+        if !checked.ok { return checked }
+        return validate_block(stmt.body)
+    }
+
+    if stmt.kind == "for" {
+        if stmt.name == "" { return fail("for sem variável") }
+        checked = validate_expr(stmt.iterable)
+        if !checked.ok { return checked }
+        return validate_block(stmt.body)
+    }
+
+    if stmt.kind == "function" {
+        if stmt.name == "" { return fail("função sem nome") }
+        return validate_block(stmt.body)
+    }
+
+    return fail("statement desconhecido: " + stmt.kind)
+}
+
+function validate_program(program) {
+    if program.kind != "program" { return fail("AST raiz inválida") }
+    for stmt in program.body {
+        checked = validate_stmt(stmt)
+        if !checked.ok { return checked }
+    }
+    return good()
+}
