@@ -1042,6 +1042,8 @@ impl Semantic {
                     "std.net.http_get" | "std.http.get" => "net_http_get",
                     "std.env.get" => "env_get",
                     "std.env.set" => "env_set",
+                    "std.json.encode" => "json_encode",
+                    "std.json.decode" => "json_decode",
                     "std.math.abs" => "abs",
                     "std.math.sqrt" => "sqrt",
                     "std.math.floor" => "floor",
@@ -1165,6 +1167,18 @@ impl Semantic {
                         return Err("Nano: env_set() recebe nome e valor".into());
                     }
                     return Ok(Type::Null);
+                }
+                if name == "json_encode" {
+                    if args.len() != 1 { return Err("Nano: json_encode() recebe 1 valor".into()); }
+                    return Ok(Type::Text);
+                }
+                if name == "json_decode" {
+                    if args.len() != 1 { return Err("Nano: json_decode() recebe 1 Text".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Text && ty != Type::Any {
+                        return Err("Nano: json_decode() requer Text".into());
+                    }
+                    return Ok(Type::Any);
                 }
                 if name == "process_spawn" {
                     if args.len() != 2 {
