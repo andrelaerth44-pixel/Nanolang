@@ -25,7 +25,11 @@ function compile_file(path) {
 }
 
 function main() {
-    result = compile_file("examples/main.nano")
+    input = std.env.get("NANO_SELFHOST_INPUT")
+    if input == null {
+        input = "examples/main.nano"
+    }
+    result = compile_file(input)
 
     if result.ok {
         destination = std.env.get("NANO_SELFHOST_OUTPUT")
