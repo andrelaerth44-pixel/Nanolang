@@ -110,7 +110,6 @@ impl Lexer {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[derive(Debug, Clone, PartialEq)]
 struct Tensor {
     data: Vec<f32>,
     shape: Vec<usize>,
