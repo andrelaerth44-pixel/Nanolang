@@ -114,7 +114,8 @@ impl NativeModule {
                     stack.push(Kind::Number);
                 }
                 IrInst::Unary(op) => {
-                    let _value_kind = stack.last().copied().ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
+                    let slot = compile_stack.len().checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
                     self.load_stack(slot, "%xmm0");
                     match op {
                         crate::UnaryOp::Neg => {
