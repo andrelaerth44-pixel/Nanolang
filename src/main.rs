@@ -4,6 +4,7 @@ mod gpu;
 mod memory;
 mod ir;
 mod native;
+mod npu;
 
 use std::{cell::RefCell, env, fs, path::Path, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
@@ -1114,7 +1115,7 @@ fn parse_cli(
         Some("run") => CliCommand::Run,
         Some("check") => CliCommand::Check,
         Some("build") => CliCommand::BuildNative,
-        _ => return Err("uso: nano run|check|build --native [--output arquivo] [--backend cpu|gpu] [--dtype f32|f16|bf16] [arquivo.nano]".into()),
+        _ => return Err("uso: nano run|check|build --native [--output arquivo] [--backend cpu|gpu|npu] [--dtype f32|f16|bf16] [arquivo.nano]".into()),
     };
 
     let mut path = None;
