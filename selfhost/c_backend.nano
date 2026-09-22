@@ -157,7 +157,11 @@ function emit_case(index, line, labels) {
             out = append(out, "            nano_object_put(object, \"" + escape_c(key_list[j]) + "\", stack[base + " + to_text(j) + "]);")
             j = j + 1
         }
-        out = append(out, "            sp = base;", "            stack[sp++] = object;", "        }", "        ip = ip + 1;", "        continue;")
+        out = append(out, "            sp = base;")
+        out = append(out, "            stack[sp++] = object;")
+        out = append(out, "        }")
+        out = append(out, "        ip = ip + 1;")
+        out = append(out, "        continue;")
         return out
     }
 
@@ -355,7 +359,12 @@ function emit_function(function) {
         }
         i = i + 1
     }
-    lines = append(lines, "        default: return nano_box_null();", "        }", "    }", "    return nano_box_null();", "}", "")
+    lines = append(lines, "        default: return nano_box_null();")
+    lines = append(lines, "        }")
+    lines = append(lines, "    }")
+    lines = append(lines, "    return nano_box_null();")
+    lines = append(lines, "}")
+    lines = append(lines, "")
     return lines
 }
 
@@ -454,13 +463,11 @@ function emit_c(ir_text, runtime_text) {
         }
     }
 
-    out = append(out,
-        "int main(void) {",
-        "    nano_fn__main(NULL, 0);",
-        "    return 0;",
-        "}",
-        ""
-    )
+    out = append(out, "int main(void) {")
+    out = append(out, "    nano_fn__main(NULL, 0);")
+    out = append(out, "    return 0;")
+    out = append(out, "}")
+    out = append(out, "")
     return {ok: true, c: join(out, "\n")}
 }
 
