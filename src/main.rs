@@ -139,32 +139,48 @@ struct Tensor {
     data: Vec<f32>,
     shape: Vec<usize>,
     requires_grad: bool,
+    device: backend::BackendKind,
     op: TensorOp,
 }
 
 impl Tensor {
     fn new(data: Vec<f32>, shape: Vec<usize>, requires_grad: bool) -> Result<TensorRef, String> {
+        Self::new_on(data, shape, requires_grad, backend::BackendKind::Cpu)
+    }
+
+    fn new_on(
+        data: Vec<f32>,
+        shape: Vec<usize>,
+        requires_grad: bool,
+        device: backend::BackendKind,
+    ) -> Result<TensorRef, String> {
         let expected = shape.iter().copied().product::<usize>();
         if expected != data.len() {
             return Err(format!("Nano: tensor tem {} valores, mas a forma exige {}", data.len(), expected));
         }
         Ok(Rc::new(RefCell::new(Self {
-            id: next_tensor_id(), data, shape, requires_grad, op: TensorOp::Leaf,
+            id: next_tensor_id(), data, shape, requires_grad, device, op: TensorOp::Leaf,
         })))
     }
 
-    fn derived(data: Vec<f32>, shape: Vec<usize>, requires_grad: bool, op: TensorOp) -> Result<TensorRef, String> {
+    fn derived_on(
+        data: Vec<f32>,
+        shape: Vec<usize>,
+        requires_grad: bool,
+        device: backend::BackendKind,
+        op: TensorOp,
+    ) -> Result<TensorRef, String> {
         let expected = shape.iter().copied().product::<usize>();
         if expected != data.len() {
             return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}", data.len(), expected));
         }
         Ok(Rc::new(RefCell::new(Self {
-            id: next_tensor_id(), data, shape, requires_grad, op,
+            id: next_tensor_id(), data, shape, requires_grad, device, op,
         })))
     }
 
     fn show(&self) -> String {
-        format!("tensor(shape={:?})", self.shape)
+        format!("tensor(shape={:?}, device={})", self.shape, self.device.name())
     }
 }
 
