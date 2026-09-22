@@ -375,7 +375,9 @@ function emit_dispatch(functions) {
     for function in functions {
         lines = append(lines, "    if (strcmp(name, \"" + escape_c(function.name) + "\") == 0) return nano_fn_" + symbol(function.name) + "(args, argc);")
     }
-    lines = append(lines, "    return nano_call_builtin(name, args, argc);", "}", "")
+    lines = append(lines, "    return nano_call_builtin(name, args, argc);")
+    lines = append(lines, "}")
+    lines = append(lines, "")
     return lines
 }
 
