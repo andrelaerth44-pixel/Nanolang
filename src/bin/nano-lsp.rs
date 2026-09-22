@@ -284,6 +284,24 @@ fn completion(server: &Server, request: &Value) -> Value {
                 ("dirname", "diretório pai"),
                 ("extension", "extensão do arquivo"),
             ],
+            "std.sync" => vec![
+                ("mutex_new", "cria estado compartilhado"),
+                ("mutex_get", "lê estado compartilhado"),
+                ("mutex_set", "atualiza estado compartilhado"),
+                ("mutex_swap", "troca estado atomically"),
+                ("semaphore_new", "cria semáforo"),
+                ("semaphore_acquire", "adquire permissão"),
+                ("semaphore_release", "libera permissão"),
+                ("channel", "cria canal compartilhado"),
+                ("send", "envia valor"),
+                ("recv", "recebe valor"),
+                ("recv_timeout", "recebe com timeout"),
+                ("try_recv", "recebe sem bloquear"),
+            ],
+            "std.crypto" => vec![
+                ("sha256", "SHA-256 hexadecimal"),
+                ("hmac_sha256", "HMAC-SHA256 hexadecimal"),
+            ],
             "std.process" => vec![
                 ("spawn", "inicia processo"),
                 ("wait", "aguarda processo"),
@@ -292,6 +310,12 @@ fn completion(server: &Server, request: &Value) -> Value {
             "std.json" => vec![
                 ("encode", "converte valor para JSON"),
                 ("decode", "converte JSON para valor Nano"),
+            ],
+            "std.http" => vec![
+                ("request", "HTTP request estruturado"),
+                ("get_structured", "GET estruturado"),
+                ("post", "POST HTTP"),
+                ("get_secure", "GET HTTPS via curl"),
             ],
             "std.os" => vec![
                 ("cwd", "diretório atual"),
