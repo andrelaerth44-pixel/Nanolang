@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Sender, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use serde_json::Value as JsonValue;
 
-use super::{backend, qualified_name, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
+use super::{backend, qualified_name, Expr, Lexer, Op, Parser, Semantic, SourceSpan, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
 use backend::{ElementwiseOp, TensorBackend};
 
 #[derive(Debug, Clone)]
@@ -211,9 +211,20 @@ struct AdamState {
     v: Vec<f32>,
 }
 
+pub(crate) struct DebugMetadata {
+    pub(crate) main: Vec<Option<SourceSpan>>,
+    pub(crate) functions: HashMap<String, Vec<Option<SourceSpan>>>,
+}
+
 pub(crate) struct Compiler {
     break_targets: Vec<Vec<usize>>,
     known_functions: HashSet<String>,
+    debug_enabled: bool,
+    debug_input: Vec<SourceSpan>,
+    debug_cursor: usize,
+    debug_active: Vec<Option<SourceSpan>>,
+    debug_main_spans: Vec<Option<SourceSpan>>,
+    debug_functions: HashMap<String, Vec<Option<SourceSpan>>>,
 }
 
 pub(crate) struct Optimizer;
@@ -282,11 +293,44 @@ impl Optimizer {
 }
 
 impl Compiler {
-    pub(crate) fn new() -> Self { Self { break_targets: Vec::new(), known_functions: HashSet::new() } }
+    pub(crate) fn new() -> Self {
+        Self {
+            break_targets: Vec::new(),
+            known_functions: HashSet::new(),
+            debug_enabled: false,
+            debug_input: Vec::new(),
+            debug_cursor: 0,
+            debug_active: Vec::new(),
+            debug_main_spans: Vec::new(),
+            debug_functions: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn compile_debug(
+        &mut self,
+        program: &[Stmt],
+        spans: &[SourceSpan],
+    ) -> Result<(IrProgram, DebugMetadata), String> {
+        self.debug_enabled = true;
+        self.debug_input = spans.to_vec();
+        self.debug_cursor = 0;
+        self.debug_active.clear();
+        self.debug_main_spans.clear();
+        self.debug_functions.clear();
+        let result = self.compile(program);
+        self.debug_enabled = false;
+        self.debug_input.clear();
+        let program = result?;
+        Ok((program, DebugMetadata {
+            main: self.debug_main_spans.clone(),
+            functions: self.debug_functions.clone(),
+        }))
+    }
 
     pub(crate) fn compile(&mut self, program: &[Stmt]) -> Result<IrProgram, String> {
         let mut functions = HashMap::new();
         self.known_functions.clear();
+        self.debug_main_spans.clear();
         for stmt in program {
             if let Stmt::Function(name, _, _) = stmt {
                 self.known_functions.insert(name.clone());
@@ -298,6 +342,7 @@ impl Compiler {
             if let Stmt::Function(name, params, body) = stmt {
                 let mut function_code = Vec::new();
                 self.break_targets.clear();
+                self.debug_active.clear();
                 for stmt in body {
                     self.compile_stmt(stmt, &mut function_code)?;
                 }
@@ -305,23 +350,52 @@ impl Compiler {
                     function_code.push(IrInst::Const(Value::Null));
                     function_code.push(IrInst::Return);
                 }
-                functions.insert(
-                    name.clone(),
-                    IrFunction { params: params.clone(), code: function_code },
-                );
+                if self.debug_enabled {
+                    self.debug_active.resize(function_code.len(), None);
+                    self.debug_functions.insert(name.clone(), self.debug_active.clone());
+                }
+                functions.insert(name.clone(), IrFunction { params: params.clone(), code: function_code });
             }
         }
 
+        self.debug_active.clear();
         for stmt in program {
             if !matches!(stmt, Stmt::Function(_, _, _)) {
                 self.compile_stmt(stmt, &mut code)?;
             }
+        }
+        if self.debug_enabled {
+            self.debug_active.resize(code.len(), None);
+            self.debug_main_spans = self.debug_active.clone();
         }
 
         Ok(IrProgram { code, functions })
     }
 
     fn compile_stmt(&mut self, stmt: &Stmt, code: &mut Vec<IrInst>) -> Result<(), String> {
+        let before = code.len();
+        let span = if self.debug_enabled {
+            let span = self.debug_input.get(self.debug_cursor).copied();
+            self.debug_cursor = self.debug_cursor.saturating_add(1);
+            span
+        } else {
+            None
+        };
+        let result = self.compile_stmt_inner(stmt, code);
+        if result.is_ok() && self.debug_enabled {
+            self.debug_active.resize(code.len(), None);
+            if let Some(span) = span {
+                for index in before..code.len() {
+                    if self.debug_active[index].is_none() {
+                        self.debug_active[index] = Some(span);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn compile_stmt_inner(&mut self, stmt: &Stmt, code: &mut Vec<IrInst>) -> Result<(), String> {
         match stmt {
             Stmt::Assign(name, expr) => {
                 self.compile_expr(expr, code)?;
