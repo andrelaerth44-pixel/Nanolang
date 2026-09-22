@@ -729,13 +729,14 @@ impl IrRuntime {
                     function.params.len()
                 ));
             }
+            let functions = self.functions.clone();
             let backend_kind = self.backend.kind();
             let dtype = self.dtype;
             let handle = self.next_handle;
             self.next_handle += 1;
             let join = thread::spawn(move || {
                 let mut runtime = IrRuntime::with_backend_and_dtype(backend_kind, dtype)?;
-                runtime.functions.insert(function_name.clone(), function.clone());
+                runtime.functions = functions;
                 for (param, value) in function.params.iter().zip(argv) {
                     runtime.vars.insert(param.clone(), value);
                 }
