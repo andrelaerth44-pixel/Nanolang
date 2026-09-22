@@ -58,6 +58,10 @@ function parse_statement(tokens, index) {
             return ok(expr.index, {kind: "return", value: expr.node})
         }
 
+        if t.text == "break" {
+            return ok(index + 1, {kind: "break"})
+        }
+
         if t.text == "print" {
             expr = parse_expression(tokens, index + 1)
             if !expr.ok { return expr }
