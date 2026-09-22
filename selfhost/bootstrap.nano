@@ -4,6 +4,7 @@
 
 use "selfhost/lexer.nano"
 use "selfhost/parser.nano"
+use "selfhost/semantic.nano"
 use "selfhost/compiler.nano"
 
 function compile_file(path) {
@@ -12,6 +13,11 @@ function compile_file(path) {
 
     if !ast.ok {
         return {ok: false, stage: "parser", error: ast.error, ir: ""}
+    }
+
+    semantic = validate_program(ast.node)
+    if !semantic.ok {
+        return {ok: false, stage: "semantic", error: semantic.error, ir: ""}
     }
 
     ir = emit_program(ast.node)
