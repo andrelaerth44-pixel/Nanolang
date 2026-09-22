@@ -29,6 +29,7 @@ pub(crate) enum IrInst {
     Index,
     Field(String),
     Call(String, usize),
+    CallValue(usize),
     Print,
     Pop,
     JumpIfFalse(usize),
@@ -65,6 +66,7 @@ enum TaskValue {
     List(Vec<TaskValue>),
     Object(HashMap<String, TaskValue>),
     Null,
+    Function(String),
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +82,7 @@ enum TaskInst {
     Index,
     Field(String),
     Call(String, usize),
+    CallValue(usize),
     Print,
     Pop,
     JumpIfFalse(usize),
@@ -106,6 +109,7 @@ impl TaskInst {
             IrInst::Index => Self::Index,
             IrInst::Field(name) => Self::Field(name.clone()),
             IrInst::Call(name, count) => Self::Call(name.clone(), *count),
+            IrInst::CallValue(count) => Self::CallValue(*count),
             IrInst::Print => Self::Print,
             IrInst::Pop => Self::Pop,
             IrInst::JumpIfFalse(target) => Self::JumpIfFalse(*target),
@@ -132,6 +136,7 @@ impl TaskInst {
             Self::Index => IrInst::Index,
             Self::Field(name) => IrInst::Field(name),
             Self::Call(name, count) => IrInst::Call(name, count),
+            Self::CallValue(count) => IrInst::CallValue(count),
             Self::Print => IrInst::Print,
             Self::Pop => IrInst::Pop,
             Self::JumpIfFalse(target) => IrInst::JumpIfFalse(target),
@@ -174,6 +179,7 @@ impl TaskValue {
             Value::Text(v) => Ok(Self::Text(v)),
             Value::Boolean(v) => Ok(Self::Boolean(v)),
             Value::Null => Ok(Self::Null),
+            Value::Function(name) => Ok(Self::Function(name)),
             Value::List(values) => values.into_iter().map(Self::from_value).collect::<Result<Vec<_>, _>>().map(Self::List),
             Value::Object(values) => values.into_iter()
                 .map(|(key, value)| Self::from_value(value).map(|value| (key, value)))
@@ -189,6 +195,7 @@ impl TaskValue {
             Self::Text(v) => Value::Text(v),
             Self::Boolean(v) => Value::Boolean(v),
             Self::Null => Value::Null,
+            Self::Function(name) => Value::Function(name),
             Self::List(values) => Value::List(values.into_iter().map(Self::into_value).collect()),
             Self::Object(values) => Value::Object(values.into_iter().map(|(key, value)| (key, value.into_value())).collect()),
         }
