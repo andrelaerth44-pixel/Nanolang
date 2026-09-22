@@ -220,6 +220,13 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
                     "triggerCharacters": ["(", ","]
                 },
                 "documentSymbolProvider": true,
+                "workspaceSymbolProvider": true,
+                "semanticTokensProvider": {
+                    "legend": {
+                        "tokenTypes": ["keyword", "function", "variable", "number", "string"]
+                    },
+                    "full": true
+                },
                 "documentFormattingProvider": true,
                 "codeActionProvider": true
             },
@@ -240,6 +247,8 @@ fn handle_request(server: &mut Server, method: &str, request: &Value) -> Value {
         "textDocument/rename" => rename(server, request),
         "textDocument/signatureHelp" => signature_help(server, request),
         "textDocument/documentSymbol" => document_symbols(server, request),
+        "workspace/symbol" => workspace_symbols(server, request),
+        "textDocument/semanticTokens/full" => semantic_tokens(server, request),
         "textDocument/formatting" => formatting(server, request),
         "textDocument/codeAction" => code_actions(server, request),
         "textDocument/diagnostic" => document_diagnostic(server, request),
@@ -259,12 +268,30 @@ fn completion(server: &Server, request: &Value) -> Value {
                 ("write_text", "escreve um arquivo de texto"),
                 ("append_text", "anexa texto"),
                 ("exists", "verifica se o caminho existe"),
+                ("is_file", "verifica se é arquivo"),
+                ("is_dir", "verifica se é diretório"),
+                ("cwd", "diretório atual"),
                 ("list", "lista um diretório"),
                 ("mkdir", "cria diretórios"),
                 ("remove", "remove arquivo ou diretório"),
             ],
             "std.http" => vec![
                 ("get", "faz um GET HTTP"),
+            ],
+            "std.path" => vec![
+                ("join", "junta caminhos"),
+                ("basename", "nome do arquivo"),
+                ("dirname", "diretório pai"),
+                ("extension", "extensão do arquivo"),
+            ],
+            "std.process" => vec![
+                ("spawn", "inicia processo"),
+                ("wait", "aguarda processo"),
+                ("output", "captura stdout/stderr"),
+            ],
+            "std.os" => vec![
+                ("cwd", "diretório atual"),
+                ("args", "argumentos do processo"),
             ],
             "std.net" => vec![
                 ("tcp_connect", "abre uma conexão TCP"),
@@ -424,6 +451,92 @@ fn completion_prefix(text: &str, request: &Value) -> String {
         }
     }
     chars[start..end].iter().collect()
+}
+
+fn workspace_symbols(server: &Server, request: &Value) -> Value {
+    let query = request.pointer("/params/query").and_then(Value::as_str).unwrap_or("").to_lowercase();
+    let mut result = Vec::new();
+    for (uri, text) in &server.documents {
+        for (line_no, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("function ") {
+                if let Some(name) = rest.split(['(', ' ', '\t']).next() {
+                    if query.is_empty() || name.to_lowercase().contains(&query) {
+                        let character = line.len() - trimmed.len() + "function ".len();
+                        result.push(json!({
+                            "name": name,
+                            "kind": 12,
+                            "location": {
+                                "uri": uri,
+                                "range": {
+                                    "start": {"line": line_no, "character": character},
+                                    "end": {"line": line_no, "character": character + name.chars().count()}
+                                }
+                            }
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    Value::Array(result)
+}
+
+fn semantic_tokens(server: &Server, request: &Value) -> Value {
+    let text = document_text(server, request);
+    let mut data: Vec<u32> = Vec::new();
+    let mut previous_line = 0usize;
+    let mut previous_start = 0usize;
+    let keywords = ["function", "if", "else", "while", "for", "in", "return", "break", "use", "print"];
+
+    for (line_no, line) in text.lines().enumerate() {
+        let mut cursor = 0usize;
+        let chars: Vec<char> = line.chars().collect();
+        while cursor < chars.len() {
+            while cursor < chars.len() && chars[cursor].is_whitespace() { cursor += 1; }
+            if cursor >= chars.len() || chars[cursor] == '#' { break; }
+            let start = cursor;
+            let token_type = if chars[cursor] == '"' {
+                cursor += 1;
+                while cursor < chars.len() {
+                    if chars[cursor] == '"' && chars.get(cursor.saturating_sub(1)) != Some(&'\\') { cursor += 1; break; }
+                    cursor += 1;
+                }
+                Some(4u32)
+            } else if chars[cursor].is_ascii_digit() {
+                cursor += 1;
+                while cursor < chars.len() && (chars[cursor].is_ascii_digit() || chars[cursor] == '.') { cursor += 1; }
+                Some(3u32)
+            } else if chars[cursor].is_ascii_alphabetic() || chars[cursor] == '_' {
+                cursor += 1;
+                while cursor < chars.len() && (chars[cursor].is_ascii_alphanumeric() || chars[cursor] == '_') { cursor += 1; }
+                let word: String = chars[start..cursor].iter().collect();
+                if keywords.contains(&word.as_str()) {
+                    Some(0u32)
+                } else if word == "true" || word == "false" || word == "null" {
+                    Some(2u32)
+                } else if line.trim_start().starts_with("function ") {
+                    Some(1u32)
+                } else {
+                    Some(2u32)
+                }
+            } else {
+                cursor += 1;
+                None
+            };
+
+            if let Some(kind) = token_type {
+                let delta_line = line_no.saturating_sub(previous_line);
+                let delta_start = if delta_line == 0 { start.saturating_sub(previous_start) } else { start };
+                let length = cursor.saturating_sub(start);
+                data.extend([delta_line as u32, delta_start as u32, length as u32, kind, 0]);
+                previous_line = line_no;
+                previous_start = start;
+            }
+        }
+    }
+
+    json!({ "data": data })
 }
 
 fn hover(server: &Server, request: &Value) -> Value {
