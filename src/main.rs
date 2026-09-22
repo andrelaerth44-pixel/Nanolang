@@ -1047,6 +1047,27 @@ impl Semantic {
                     "std.env.set" => "env_set",
                     "std.json.encode" => "json_encode",
                     "std.json.decode" => "json_decode",
+                    "std.sync.mutex_new" => "sync_mutex_new",
+                    "std.sync.mutex_get" => "sync_mutex_get",
+                    "std.sync.mutex_set" => "sync_mutex_set",
+                    "std.sync.mutex_swap" => "sync_mutex_swap",
+                    "std.sync.mutex_close" => "sync_mutex_close",
+                    "std.sync.semaphore_new" => "sync_semaphore_new",
+                    "std.sync.semaphore_acquire" => "sync_semaphore_acquire",
+                    "std.sync.semaphore_release" => "sync_semaphore_release",
+                    "std.sync.semaphore_close" => "sync_semaphore_close",
+                    "std.sync.channel" => "sync_channel_new",
+                    "std.sync.send" => "sync_channel_send",
+                    "std.sync.recv" => "sync_channel_recv",
+                    "std.sync.recv_timeout" => "sync_channel_recv_timeout",
+                    "std.sync.try_recv" => "sync_channel_try_recv",
+                    "std.sync.close_channel" => "sync_channel_close",
+                    "std.crypto.sha256" => "crypto_sha256",
+                    "std.crypto.hmac_sha256" => "crypto_hmac_sha256",
+                    "std.http.request" => "http_request",
+                    "std.http.post" => "http_post",
+                    "std.http.get_structured" => "http_get_structured",
+                    "std.http.get_secure" => "https_get",
                     "std.math.abs" => "abs",
                     "std.math.sqrt" => "sqrt",
                     "std.math.floor" => "floor",
@@ -1183,6 +1204,42 @@ impl Semantic {
                     }
                     return Ok(Type::Any);
                 }
+                if name == "crypto_sha256" || name == "https_get" {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Text")); }
+                    return Ok(Type::Text);
+                }
+                if name == "crypto_hmac_sha256" {
+                    if args.len() != 2 { return Err("Nano: crypto.hmac_sha256() recebe chave e mensagem".into()); }
+                    return Ok(Type::Text);
+                }
+                if name == "http_get_structured" {
+                    if args.len() != 3 { return Err("Nano: http.get_structured() recebe host, porta e caminho".into()); }
+                    return Ok(Type::Object);
+                }
+                if name == "http_post" || name == "http_request" {
+                    if args.len() != 6 { return Err(format!("Nano: {name}() recebe 6 argumentos")); }
+                    return Ok(Type::Object);
+                }
+                if name == "sync_mutex_new" { if args.len() != 1 { return Err("Nano: sync.mutex_new() recebe valor".into()); } return Ok(Type::Number); }
+                if name == "sync_mutex_get" { if args.len() != 1 { return Err("Nano: sync.mutex_get() recebe handle".into()); } return Ok(Type::Any); }
+                if name == "sync_mutex_set" || name == "sync_mutex_swap" {
+                    if args.len() != 2 { return Err(format!("Nano: {name}() recebe handle e valor")); }
+                    return Ok(if name == "sync_mutex_swap" { Type::Any } else { Type::Null });
+                }
+                if name == "sync_mutex_close" { if args.len() != 1 { return Err("Nano: sync.mutex_close() recebe handle".into()); } return Ok(Type::Null); }
+                if name == "sync_semaphore_new" { if args.len() != 1 { return Err("Nano: sync.semaphore_new() recebe contador".into()); } return Ok(Type::Number); }
+                if name == "sync_semaphore_acquire" { if args.len() != 1 && args.len() != 2 { return Err("Nano: sync.semaphore_acquire() recebe 1 ou 2 argumentos".into()); } return Ok(Type::Boolean); }
+                if name == "sync_semaphore_release" || name == "sync_semaphore_close" { if args.len() != 1 { return Err(format!("Nano: {name}() recebe handle")); } return Ok(Type::Null); }
+                if name == "sync_channel_new" { if !args.is_empty() { return Err("Nano: sync.channel() não recebe argumentos".into()); } return Ok(Type::Number); }
+                if name == "sync_channel_send" { if args.len() != 2 { return Err("Nano: sync.send() recebe canal e valor".into()); } return Ok(Type::Null); }
+                if name == "sync_channel_recv" || name == "sync_channel_recv_timeout" {
+                    if (name == "sync_channel_recv" && args.len() != 1) || (name == "sync_channel_recv_timeout" && args.len() != 2) {
+                        return Err(format!("Nano: {name}() recebe argumentos inválidos"));
+                    }
+                    return Ok(Type::Any);
+                }
+                if name == "sync_channel_try_recv" { if args.len() != 1 { return Err("Nano: sync.try_recv() recebe canal".into()); } return Ok(Type::Any); }
+                if name == "sync_channel_close" { if args.len() != 1 { return Err("Nano: sync.close_channel() recebe canal".into()); } return Ok(Type::Null); }
                 if name == "process_spawn" {
                     if args.len() != 2 {
                         return Err("Nano: process_spawn() recebe comando e lista de argumentos".into());
