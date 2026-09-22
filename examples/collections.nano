@@ -1,0 +1,19 @@
+# Coleções e objetos: Nano 0.2
+
+numbers = [10, 20, 30]
+
+user = {
+    name: "André",
+    role: "creator",
+    age: 25
+}
+
+print numbers[1]
+print user.name
+print user["role"]
+print len(numbers)
+
+more = [40, 50]
+all = numbers + more
+
+print all
