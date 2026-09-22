@@ -8,6 +8,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command};
 use std::thread::{self, JoinHandle};
+use std::sync::mpsc::{self, Sender, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 use super::{backend, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
@@ -355,6 +356,7 @@ pub(crate) struct IrRuntime {
     children: HashMap<u64, Child>,
     tasks: HashMap<u64, JoinHandle<Result<i32, String>>>,
     ui_windows: HashMap<u64, ui::UiHandle>,
+    channels: HashMap<u64, (Sender<Value>, Receiver<Value>)>,
 }
 
 impl IrRuntime {
@@ -397,6 +399,7 @@ impl IrRuntime {
             children: HashMap::new(),
             tasks: HashMap::new(),
             ui_windows: HashMap::new(),
+            channels: HashMap::new(),
         })
     }
 
@@ -538,6 +541,27 @@ impl IrRuntime {
     }
 
     fn call(&mut self, name: &str, args: Vec<Value>) -> Result<Value, String> {
+        let name = match name {
+            "std.fs.read_text" => "fs_read_text",
+            "std.fs.write_text" => "fs_write_text",
+            "std.fs.append_text" => "fs_append_text",
+            "std.fs.exists" => "fs_exists",
+            "std.fs.list" => "fs_list",
+            "std.fs.mkdir" => "fs_mkdir",
+            "std.fs.remove" => "fs_remove",
+            "std.process.spawn" => "process_spawn",
+            "std.process.wait" => "process_wait",
+            "std.time.now_ms" => "time_now_ms",
+            "std.time.sleep_ms" => "time_sleep_ms",
+            "std.net.tcp_connect" => "net_tcp_connect",
+            "std.net.tcp_listen" => "net_tcp_listen",
+            "std.net.tcp_accept" => "net_tcp_accept",
+            "std.net.tcp_send" => "net_tcp_send",
+            "std.net.tcp_recv" => "net_tcp_recv",
+            "std.net.tcp_close" => "net_tcp_close",
+            other => other,
+        };
+
         if name == "fs_read_text" {
             if args.len() != 1 { return Err("Nano: fs_read_text() recebe caminho".into()); }
             let path = text_arg(&args[0], "caminho")?;
@@ -902,6 +926,45 @@ impl IrRuntime {
                 Ok(event) => Value::Text(event),
                 Err(_) => Value::Text(String::new()),
             });
+        }
+
+        if name == "assert" {
+            if args.len() != 1 { return Err("Nano: assert() recebe 1 argumento".into()); }
+            if !args[0].truthy() { return Err("Nano assertion failed".into()); }
+            return Ok(Value::Null);
+        }
+
+        if name == "channel" || name == "std.async.channel" {
+            if !args.is_empty() { return Err("Nano: channel() não recebe argumentos".into()); }
+            let (tx, rx) = mpsc::channel();
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            self.channels.insert(handle, (tx, rx));
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "send" || name == "std.async.send" {
+            if args.len() != 2 { return Err("Nano: send() recebe canal e valor".into()); }
+            let handle = integer_arg(&args[0], "canal")?;
+            let (tx, _) = self.channels.get(&handle)
+                .ok_or_else(|| format!("Nano: canal {handle} não encontrado"))?;
+            tx.send(args[1].clone()).map_err(|_| format!("Nano: canal {handle} foi fechado"))?;
+            return Ok(Value::Null);
+        }
+
+        if name == "recv" || name == "std.async.recv" {
+            if args.len() != 1 { return Err("Nano: recv() recebe canal".into()); }
+            let handle = integer_arg(&args[0], "canal")?;
+            let (_, rx) = self.channels.get_mut(&handle)
+                .ok_or_else(|| format!("Nano: canal {handle} não encontrado"))?;
+            return rx.recv().map_err(|_| format!("Nano: canal {handle} foi fechado"));
+        }
+
+        if name == "close_channel" || name == "std.async.close_channel" {
+            if args.len() != 1 { return Err("Nano: close_channel() recebe canal".into()); }
+            let handle = integer_arg(&args[0], "canal")?;
+            self.channels.remove(&handle);
+            return Ok(Value::Null);
         }
 
         if name == "len" {
