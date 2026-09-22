@@ -108,7 +108,7 @@ impl Lexer {
 }
 
 #[derive(Debug, Clone)]
-enum Value { Number(f64), Text(String), Boolean(bool), Null }
+enum Value { Number(f64), Text(String), Boolean(bool), List(Vec<Value>), Object(HashMap<String, Value>), Null }
 
 impl Value {
     fn truthy(&self) -> bool {
