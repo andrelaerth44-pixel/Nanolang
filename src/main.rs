@@ -834,11 +834,24 @@ impl Semantic {
                 for (_, value) in fields { self.expr_type(value)?; }
                 Ok(Type::Object)
             }
+            Expr::Unary(op, expr) => {
+                let ty = self.expr_type(expr)?;
+                match op {
+                    UnaryOp::Neg => {
+                        if ty != Type::Number && ty != Type::Any {
+                            return Err(format!("Nano: menos unário requer Number, recebido {}", ty.name()));
+                        }
+                        Ok(Type::Number)
+                    }
+                    UnaryOp::Not => Ok(Type::Boolean),
+                }
+            }
             Expr::Binary(a, op, b) => {
                 let left = self.expr_type(a)?;
                 let right = self.expr_type(b)?;
                 match op {
                     Op::Eq | Op::Ne => Ok(Type::Boolean),
+                    Op::And | Op::Or => Ok(Type::Boolean),
                     Op::Add => {
                         if left == Type::Any || right == Type::Any { return Ok(Type::Any); }
                         match (left, right) {
@@ -848,7 +861,7 @@ impl Semantic {
                             _ => Err(format!("Nano: '+' não aceita {} + {}", left.name(), right.name())),
                         }
                     }
-                    Op::Sub | Op::Mul | Op::Div => {
+                    Op::Sub | Op::Mul | Op::Div | Op::Mod => {
                         Self::numeric_result(left, right, "operação aritmética")
                     }
                     Op::Gt | Op::Ge | Op::Lt | Op::Le => {
