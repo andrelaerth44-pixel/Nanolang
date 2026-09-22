@@ -1,7 +1,11 @@
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
+    fs,
     io::{self, Read, Write},
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 #[derive(Default)]
@@ -123,8 +127,64 @@ fn handle_notification(server: &mut Server, request: &Value) -> Option<Value> {
     }
 }
 
+fn compiler_diagnostics(text: &str) -> Vec<Diagnostic> {
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);
+
+    let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("nano-lsp-{}-{id}.nano", std::process::id()));
+
+    if fs::write(&path, text).is_err() {
+        return Vec::new();
+    }
+
+    let compiler = std::env::var_os("NANO_COMPILER")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join("nano")))
+        })
+        .unwrap_or_else(|| PathBuf::from("nano"));
+
+    let output = Command::new(compiler).arg("check").arg(&path).output();
+    let _ = fs::remove_file(&path);
+
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if output.status.success() {
+        return Vec::new();
+    }
+
+    let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if message.is_empty() {
+        return vec![Diagnostic {
+            line: 0,
+            character: 0,
+            end_line: 0,
+            end_character: 1,
+            message: "Nano compiler rejeitou o documento.".into(),
+            severity: 1,
+        }];
+    }
+
+    message.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| Diagnostic {
+            line: 0,
+            character: 0,
+            end_line: 0,
+            end_character: 1,
+            message: line.trim().to_string(),
+            severity: 1,
+        })
+        .collect()
+}
+
 fn publish_diagnostics(uri: &str, text: &str) -> Value {
-    let diagnostics: Vec<Value> = analyze(text).into_iter().map(|d| json!({
+    let mut diagnostics = analyze(text);
+    diagnostics.extend(compiler_diagnostics(text));
+    let items: Vec<Value> = diagnostics.into_iter().map(|d| json!({
         "range": {
             "start": { "line": d.line, "character": d.character },
             "end": { "line": d.end_line, "character": d.end_character }
@@ -139,7 +199,7 @@ fn publish_diagnostics(uri: &str, text: &str) -> Value {
         "method": "textDocument/publishDiagnostics",
         "params": {
             "uri": uri,
-            "diagnostics": diagnostics
+            "diagnostics": items
         }
     })
 }
@@ -675,17 +735,17 @@ fn code_actions(server: &Server, request: &Value) -> Value {
 
 fn document_diagnostic(server: &Server, request: &Value) -> Value {
     let text = document_text(server, request);
-    let items: Vec<Value> = analyze(&text).into_iter().map(|d| {
-        json!({
-            "range": {
-                "start": { "line": d.line, "character": d.character },
-                "end": { "line": d.end_line, "character": d.end_character }
-            },
-            "severity": d.severity,
-            "source": "nano",
-            "message": d.message
-        })
-    }).collect();
+    let mut all = analyze(&text);
+    all.extend(compiler_diagnostics(&text));
+    let items: Vec<Value> = all.into_iter().map(|d| json!({
+        "range": {
+            "start": { "line": d.line, "character": d.character },
+            "end": { "line": d.end_line, "character": d.end_character }
+        },
+        "severity": d.severity,
+        "source": "nano",
+        "message": d.message
+    })).collect();
 
     json!({ "kind": "full", "items": items })
 }
