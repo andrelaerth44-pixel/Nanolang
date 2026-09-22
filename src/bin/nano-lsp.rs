@@ -275,9 +275,7 @@ fn completion(server: &Server, request: &Value) -> Value {
                 ("mkdir", "cria diretórios"),
                 ("remove", "remove arquivo ou diretório"),
             ],
-            "std.http" => vec![
-                ("get", "faz um GET HTTP"),
-            ],
+
             "std.path" => vec![
                 ("join", "junta caminhos"),
                 ("basename", "nome do arquivo"),
