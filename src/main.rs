@@ -100,6 +100,7 @@ impl Lexer {
                 '"' => return Ok(Token::Text(v)),
                 '\\' => match self.advance() {
                     Some('n') => v.push('\n'),
+                    Some('r') => v.push('\r'),
                     Some('t') => v.push('\t'),
                     Some('"') => v.push('"'),
                     Some('\\') => v.push('\\'),
@@ -1537,6 +1538,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lexer_supports_carriage_return_escape() {
+        let mut lexer = Lexer::new(r#""\r""#);
+        let tokens = lexer.lex().unwrap();
+        assert_eq!(tokens[0], Token::Text("\r".into()));
+    }
 
     #[test]
     fn cli_defaults_to_run_and_main() {
