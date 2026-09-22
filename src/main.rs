@@ -31,6 +31,69 @@ enum Token {
 
 struct Lexer { src: Vec<char>, pos: usize }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SourceSpan {
+    pub(crate) start_line: usize,
+    pub(crate) start_col: usize,
+    pub(crate) end_line: usize,
+    pub(crate) end_col: usize,
+}
+
+impl SourceSpan {
+    pub(crate) fn contains_line(&self, line: usize) -> bool {
+        line >= self.start_line && line <= self.end_line
+    }
+}
+
+fn source_line_col(src: &[char], index: usize) -> (usize, usize) {
+    let mut line = 1usize;
+    let mut col = 1usize;
+    for &ch in src.iter().take(index) {
+        if ch == '\n' { line += 1; col = 1; } else { col += 1; }
+    }
+    (line, col)
+}
+
+fn skip_source_space(src: &[char], mut pos: usize) -> usize {
+    loop {
+        while matches!(src.get(pos), Some(' ' | '\n' | '\r' | '\t')) { pos += 1; }
+        if src.get(pos) == Some(&'#') {
+            while !matches!(src.get(pos), None | Some('\n')) { pos += 1; }
+            continue;
+        }
+        return pos;
+    }
+}
+
+fn consume_token_source(src: &[char], mut pos: usize, token: &Token) -> usize {
+    match token {
+        Token::Text(_) => {
+            pos += 1;
+            while let Some(ch) = src.get(pos).copied() {
+                pos += 1;
+                if ch == '\\' { pos += 1; continue; }
+                if ch == '"' { break; }
+            }
+            pos
+        }
+        Token::Ident(_) | Token::True | Token::False | Token::Null | Token::Use | Token::Function
+        | Token::Print | Token::If | Token::Else | Token::Return | Token::Break | Token::While
+        | Token::For | Token::In => {
+            while matches!(src.get(pos), Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) { pos += 1; }
+            pos
+        }
+        Token::Number(_) => {
+            while matches!(src.get(pos), Some('0'..='9' | '.')) { pos += 1; }
+            pos
+        }
+        Token::Eof => pos,
+        _ => {
+            let two = matches!(token, Token::EqualEqual | Token::BangEqual | Token::GreaterEqual | Token::LessEqual | Token::And | Token::Or);
+            pos + if two { 2 } else { 1 }
+        }
+    }
+}
+
 impl Lexer {
     fn new(src: &str) -> Self { Self { src: src.chars().collect(), pos: 0 } }
     fn peek(&self) -> Option<char> { self.src.get(self.pos).copied() }
@@ -98,6 +161,22 @@ impl Lexer {
         out.push(Token::Eof);
         Ok(out)
     }
+
+    pub(crate) fn lex_with_spans(&mut self) -> Result<(Vec<Token>, Vec<SourceSpan>), String> {
+        let tokens = self.lex()?;
+        let mut spans = Vec::with_capacity(tokens.len());
+        let mut pos = 0usize;
+        for token in &tokens {
+            pos = skip_source_space(&self.src, pos);
+            let start = pos;
+            pos = consume_token_source(&self.src, pos, token);
+            let (start_line, start_col) = source_line_col(&self.src, start);
+            let (end_line, end_col) = source_line_col(&self.src, pos);
+            spans.push(SourceSpan { start_line, start_col, end_line, end_col });
+        }
+        Ok((tokens, spans))
+    }
+
     fn string(&mut self) -> Result<Token, String> {
         self.advance();
         let mut v = String::new();
@@ -426,7 +505,12 @@ enum Stmt {
     Return(Expr),
 }
 
-struct Parser { tokens: Vec<Token>, pos: usize }
+struct Parser {
+    tokens: Vec<Token>,
+    token_spans: Vec<SourceSpan>,
+    pos: usize,
+    statement_spans: Vec<SourceSpan>,
+}
 
 fn qualified_name(expr: &Expr) -> Option<String> {
     match expr {
@@ -437,7 +521,21 @@ fn qualified_name(expr: &Expr) -> Option<String> {
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self { Self { tokens, pos: 0 } }
+    fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, token_spans: Vec::new(), pos: 0, statement_spans: Vec::new() }
+    }
+    fn new_with_spans(tokens: Vec<Token>, token_spans: Vec<SourceSpan>) -> Self {
+        Self { tokens, token_spans, pos: 0, statement_spans: Vec::new() }
+    }
+    pub(crate) fn statement_spans(&self) -> Vec<SourceSpan> {
+        self.statement_spans.clone()
+    }
+    fn current_span_start(&self) -> (usize, usize) {
+        self.token_spans.get(self.pos).map(|s| (s.start_line, s.start_col)).unwrap_or((1, 1))
+    }
+    fn previous_span_end(&self) -> (usize, usize) {
+        self.token_spans.get(self.pos.saturating_sub(1)).map(|s| (s.end_line, s.end_col)).unwrap_or_else(|| self.current_span_start())
+    }
     fn peek(&self) -> &Token { &self.tokens[self.pos] }
     fn advance(&mut self) -> Token {
         let t = self.tokens[self.pos].clone();
@@ -454,6 +552,23 @@ impl Parser {
         Ok(out)
     }
     fn statement(&mut self) -> Result<Stmt, String> {
+        let track = !matches!(self.peek(), Token::Function);
+        let slot = if track {
+            self.statement_spans.push(SourceSpan { start_line: 1, start_col: 1, end_line: 1, end_col: 1 });
+            Some(self.statement_spans.len() - 1)
+        } else {
+            None
+        };
+        let start = self.current_span_start();
+        let result = self.statement_inner();
+        if let (Some(index), Ok(_)) = (slot, &result) {
+            let end = self.previous_span_end();
+            self.statement_spans[index] = SourceSpan { start_line: start.0, start_col: start.1, end_line: end.0, end_col: end.1 };
+        }
+        result
+    }
+
+    fn statement_inner(&mut self) -> Result<Stmt, String> {
         match self.peek() {
             Token::Use => {
                 self.advance();
