@@ -251,6 +251,7 @@ fn completion(server: &Server, request: &Value) -> Value {
         ("return", 14, "retorna de uma função"),
         ("true", 21, "booleano verdadeiro"),
         ("false", 21, "booleano falso"),
+        ("null", 21, "valor nulo"),
         ("use", 14, "carrega um módulo"),
         ("print", 3, "imprime um valor"),
         ("assert", 3, "falha quando a condição é falsa"),
