@@ -166,6 +166,30 @@ impl TensorBackend for NpuBackend {
         Ok(result)
     }
 
+    fn matmul_transposed(
+        &self,
+        left: &[f32],
+        left_shape: &[usize],
+        right: &[f32],
+        right_shape: &[usize],
+        left_transpose: bool,
+        right_transpose: bool,
+    ) -> Result<Vec<f32>, BackendError> {
+        let response = self.request("matmul_transposed", json!({
+            "left": left,
+            "left_shape": left_shape,
+            "right": right,
+            "right_shape": right_shape,
+            "left_transpose": left_transpose,
+            "right_transpose": right_transpose
+        }))?;
+        let data = response.get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| BackendError("Nano: provider NPU não devolveu data para matmul_transposed".into()))?;
+        data.iter().map(|v| v.as_f64().map(|n| n as f32)
+            .ok_or_else(|| BackendError("Nano: data NPU inválida".into()))).collect()
+    }
+
     fn elementwise(
         &self,
         left: &[f32],
