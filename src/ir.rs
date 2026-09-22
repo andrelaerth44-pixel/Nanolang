@@ -570,6 +570,7 @@ pub(crate) struct IrRuntime {
     tasks: HashMap<u64, JoinHandle<Result<TaskValue, String>>>,
     ui_windows: HashMap<u64, ui::UiHandle>,
     channels: HashMap<u64, (Sender<Value>, Receiver<Value>)>,
+    quiet: bool,
 }
 
 impl IrRuntime {
@@ -613,6 +614,7 @@ impl IrRuntime {
             tasks: HashMap::new(),
             ui_windows: HashMap::new(),
             channels: HashMap::new(),
+            quiet: false,
         })
     }
 
@@ -743,7 +745,9 @@ impl IrRuntime {
                 }
                 IrInst::Print => {
                     let value = stack.pop().ok_or_else(|| "Nano IR: stack vazia em Print".to_string())?;
-                    println!("{}", value.show());
+                    if !self.quiet {
+                        println!("{}", value.show());
+                    }
                 }
                 IrInst::Pop => {
                     stack.pop().ok_or_else(|| "Nano IR: stack vazia em Pop".to_string())?;
@@ -2890,6 +2894,7 @@ pub(crate) struct DebugSession {
 impl DebugSession {
     pub(crate) fn new(program: &IrProgram) -> Result<Self, String> {
         let mut runtime = IrRuntime::new();
+        runtime.quiet = true;
         runtime.functions.extend(program.functions.clone());
         Ok(Self {
             runtime,
