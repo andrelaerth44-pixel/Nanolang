@@ -1558,6 +1558,18 @@ impl Semantic {
                 if name == "ui_clear" { if args.len() != 4 { return Err("Nano: ui.clear() recebe handle,r,g,b".into()); } return Ok(Type::Null); }
                 if name == "ui_rect" { if args.len() != 8 { return Err("Nano: ui.rect() recebe 8 argumentos".into()); } return Ok(Type::Null); }
                 if name == "ui_button" { if args.len() != 9 { return Err("Nano: ui.button() recebe 9 argumentos".into()); } return Ok(Type::Null); }
+                if name == "ui_text" {
+                    if args.len() != 8 { return Err("Nano: ui.text() recebe handle,text,x,y,size,r,g,b".into()); }
+                    return Ok(Type::Null);
+                }
+                if name == "ui_vbox" {
+                    if args.len() != 7 { return Err("Nano: ui.vbox() recebe handle,x,y,width,row_height,gap,children".into()); }
+                    let ty = self.expr_type(&args[6])?;
+                    if ty != Type::List && ty != Type::Any {
+                        return Err("Nano: ui.vbox() requer List de widgets".into());
+                    }
+                    return Ok(Type::Null);
+                }
                 if name == "ui_set_title" {
                     if args.len() != 2 { return Err("Nano: ui_set_title() recebe handle e título".into()); }
                     if (self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any)
