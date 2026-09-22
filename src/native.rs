@@ -675,7 +675,139 @@ impl NativeModule {
                     }
                     self.text.push_str("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
                 }
-                _ => unreachable!("unsupported instruction rejected in native stack analysis"),
+                IrInst::MakeList(count) => {
+                    let start = depth.checked_sub(*count)
+                        .ok_or_else(|| format!("Nano native: MakeList sem itens suficientes em '{name}'"))?;
+                    let list_temp = stack_offset(max_stack);
+                    let item_temp = stack_offset(max_stack + 1);
+                    self.text.push_str(&format!(
+                        "    call nano_list_new@PLT\n    movq %rax, {}(%rbp)\n",
+                        list_temp
+                    ));
+                    for offset in 0..*count {
+                        let slot = start + offset;
+                        let kind = entry_states[ip].as_ref().unwrap()[slot];
+                        self.box_value(slot, kind)?;
+                        self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call nano_list_push@PLT\n",
+                            item_temp,
+                            list_temp,
+                            item_temp
+                        ));
+                    }
+                    self.text.push_str(&format!(
+                        "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
+                        list_temp, stack_offset(start)
+                    ));
+                }
+                IrInst::MakeObject(keys) => {
+                    let start = depth.checked_sub(keys.len())
+                        .ok_or_else(|| format!("Nano native: MakeObject sem valores suficientes em '{name}'"))?;
+                    let object_temp = stack_offset(max_stack);
+                    let item_temp = stack_offset(max_stack + 1);
+                    self.text.push_str(&format!(
+                        "    call nano_object_new@PLT\n    movq %rax, {}(%rbp)\n",
+                        object_temp
+                    ));
+                    for (offset, key) in keys.iter().enumerate() {
+                        let slot = start + offset;
+                        let kind = entry_states[ip].as_ref().unwrap()[slot];
+                        let label = self.add_text(key);
+                        self.box_value(slot, kind)?;
+                        self.text.push_str(&format!(
+                            "    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    leaq {label}(%rip), %rsi\n    movq {}(%rbp), %rdx\n    call nano_object_put@PLT\n",
+                            item_temp,
+                            object_temp,
+                            item_temp
+                        ));
+                    }
+                    self.text.push_str(&format!(
+                        "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
+                        object_temp, stack_offset(start)
+                    ));
+                }
+                IrInst::Index => {
+                    let index_slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: Index sem índice em '{name}'"))?;
+                    let target_slot = depth.checked_sub(2)
+                        .ok_or_else(|| format!("Nano native: Index sem alvo em '{name}'"))?;
+                    let target_temp = stack_offset(max_stack);
+                    let index_temp = stack_offset(max_stack + 1);
+                    let target_kind = entry_states[ip].as_ref().unwrap()[target_slot];
+                    let index_kind = entry_states[ip].as_ref().unwrap()[index_slot];
+                    self.box_value(target_slot, target_kind)?;
+                    self.text.push_str(&format!("    movq %rax, {}(%rbp)\n", target_temp));
+                    self.box_value(index_slot, index_kind)?;
+                    self.text.push_str(&format!(
+                        "    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call nano_any_index@PLT\n    movq %rax, {}(%rbp)\n",
+                        index_temp,
+                        target_temp,
+                        index_temp,
+                        stack_offset(target_slot)
+                    ));
+                }
+                IrInst::Field(field) => {
+                    let target_slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: Field sem alvo em '{name}'"))?;
+                    let target_kind = entry_states[ip].as_ref().unwrap()[target_slot];
+                    let target_temp = stack_offset(max_stack);
+                    let label = self.add_text(field);
+                    self.box_value(target_slot, target_kind)?;
+                    self.text.push_str(&format!(
+                        "    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    leaq {label}(%rip), %rsi\n    call nano_any_field@PLT\n    movq %rax, {}(%rbp)\n",
+                        target_temp,
+                        target_temp,
+                        stack_offset(target_slot)
+                    ));
+                }
+                IrInst::SetIndex => {
+                    let value_slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: SetIndex sem valor em '{name}'"))?;
+                    let index_slot = depth.checked_sub(2)
+                        .ok_or_else(|| format!("Nano native: SetIndex sem índice em '{name}'"))?;
+                    let target_slot = depth.checked_sub(3)
+                        .ok_or_else(|| format!("Nano native: SetIndex sem alvo em '{name}'"))?;
+                    let target_temp = stack_offset(max_stack);
+                    let index_temp = stack_offset(max_stack + 1);
+                    let value_temp = stack_offset(max_stack + 2);
+                    let state = entry_states[ip].as_ref().unwrap();
+                    self.box_value(target_slot, state[target_slot])?;
+                    self.text.push_str(&format!("    movq %rax, {}(%rbp)\n", target_temp));
+                    self.box_value(index_slot, state[index_slot])?;
+                    self.text.push_str(&format!("    movq %rax, {}(%rbp)\n", index_temp));
+                    self.box_value(value_slot, state[value_slot])?;
+                    self.text.push_str(&format!(
+                        "    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    movq {}(%rbp), %rdx\n    call nano_any_set_index@PLT\n    movq %rax, {}(%rbp)\n",
+                        value_temp,
+                        target_temp,
+                        index_temp,
+                        value_temp,
+                        target_temp
+                    ));
+                }
+                IrInst::SetField(field) => {
+                    let value_slot = depth.checked_sub(1)
+                        .ok_or_else(|| format!("Nano native: SetField sem valor em '{name}'"))?;
+                    let target_slot = depth.checked_sub(2)
+                        .ok_or_else(|| format!("Nano native: SetField sem alvo em '{name}'"))?;
+                    let target_temp = stack_offset(max_stack);
+                    let value_temp = stack_offset(max_stack + 1);
+                    let label = self.add_text(field);
+                    let state = entry_states[ip].as_ref().unwrap();
+                    self.box_value(target_slot, state[target_slot])?;
+                    self.text.push_str(&format!("    movq %rax, {}(%rbp)\n", target_temp));
+                    self.box_value(value_slot, state[value_slot])?;
+                    self.text.push_str(&format!(
+                        "    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    leaq {label}(%rip), %rsi\n    movq {}(%rbp), %rdx\n    call nano_any_set_field@PLT\n    movq %rax, {}(%rbp)\n",
+                        value_temp,
+                        target_temp,
+                        value_temp,
+                        target_slot
+                    ));
+                }
+                IrInst::IterInit | IrInst::IterNext(_, _) | IrInst::Use(_) => {
+                    return Err(format!("Nano native: instrução não suportada em '{name}': {:?}", code[ip]));
+                }
             }
         }
 
