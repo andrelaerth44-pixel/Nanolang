@@ -36,14 +36,34 @@ CUDA-capable GPU e outros aceleradores
 2. Grafo de operações e autograd inicial.
 3. Operações vetorizadas e kernels.
 4. Tipos de precisão e armazenamento compacto.
-5. Otimizadores.
+5. Otimizadores: SGD e Adam na linguagem.
 6. Data loader e datasets grandes.
 7. Execução GPU.
 8. Kernel fusion e planejamento de memória.
 9. Treino distribuído/offload quando necessário.
 10. Ferramentas para modelos de grande porte.
 
-O suporte atual ainda está no início: Tensor usa `f32` e `matmul` 2D em CPU. Portanto, a meta de 5B parâmetros ainda não é uma capacidade disponível do Nano atual.
+O suporte atual ainda está no início: Tensor usa `f32`, `matmul` 2D em CPU, autograd inicial e Adam. Ainda não há backend GPU. Portanto, a meta de 5B parâmetros ainda não é uma capacidade disponível do Nano atual.
+
+### Memória para modelos grandes
+
+A primeira regra é não duplicar buffers desnecessariamente. Nano já usa referências compartilhadas no grafo de Tensor e atualizações de parâmetros in-place.
+
+As próximas camadas de memória serão:
+
+```
+contiguous buffers
+      ↓
+memory planner
+      ↓
+reuse de buffers
+      ↓
+mixed precision
+      ↓
+checkpoint / offload
+      ↓
+GPU memory manager
+```
 
 ## Princípio
 
