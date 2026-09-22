@@ -87,20 +87,20 @@ fn handle_notification(server: &mut Server, request: &Value) -> Option<Value> {
     match method {
         "initialized" | "$/cancelRequest" => return None,
         "textDocument/didOpen" => {
-            let Some(item) = request.pointer("/params/textDocument") else { return; };
+            let Some(item) = request.pointer("/params/textDocument") else { return None; };
             let uri = item.get("uri").and_then(Value::as_str).unwrap_or("").to_string();
             let text = item.get("text").and_then(Value::as_str).unwrap_or("").to_string();
             server.documents.insert(uri.clone(), text.clone());
             return Some(publish_diagnostics(&uri, &text));
         }
         "textDocument/didChange" => {
-            let Some(params) = request.get("params") else { return; };
+            let Some(params) = request.get("params") else { return None; };
             let uri = params
                 .pointer("/textDocument/uri")
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let Some(changes) = params.get("contentChanges").and_then(Value::as_array) else { return; };
+            let Some(changes) = params.get("contentChanges").and_then(Value::as_array) else { return None; };
             if let Some(change) = changes.last() {
                 if let Some(text) = change.get("text").and_then(Value::as_str) {
                     server.documents.insert(uri.clone(), text.to_string());
@@ -464,7 +464,7 @@ fn format_source(src: &str) -> String {
         }
         last_blank = false;
 
-        let (_, closes) = scan_braces(line);
+        let (_, _closes) = scan_braces(line);
         let starts_with_close = line.starts_with('}');
         if starts_with_close {
             indent = indent.saturating_sub(1);
