@@ -270,7 +270,10 @@ impl NativeModule {
                 IrInst::Load(var) => {
                     let index = *locals.get(var)
                         .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
-                    let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
+                    let kind = local_kinds
+                        .get(var)
+                        .copied()
+                        .unwrap_or(Kind::Unknown);
                     match kind {
                         Kind::Text | Kind::Function | Kind::Null | Kind::Any => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
