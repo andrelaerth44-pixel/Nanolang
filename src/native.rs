@@ -577,6 +577,22 @@ fn analyze_stack(
                 }
                 next.push(function_returns.get(callee).copied().unwrap_or(Kind::Number));
             }
+            IrInst::CallValue(count) => {
+                if *count > 8 {
+                    return Err(format!("Nano native: chamada indireta tem mais de 8 argumentos em '{name}'"));
+                }
+                for _ in 0..*count {
+                    let value = next.pop().ok_or_else(|| format!("Nano native: chamada indireta sem argumento em '{name}'"))?;
+                    if !matches!(value, Kind::Number | Kind::Boolean) {
+                        return Err(format!("Nano native: chamada indireta aceita apenas argumentos escalares em '{name}'"));
+                    }
+                }
+                let target = next.pop().ok_or_else(|| format!("Nano native: chamada indireta sem alvo em '{name}'"))?;
+                if target != Kind::Function {
+                    return Err(format!("Nano native: alvo de chamada indireta deve ser Function em '{name}'"));
+                }
+                next.push(Kind::Number);
+            }
             IrInst::Print => {
                 next.pop().ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
             }
