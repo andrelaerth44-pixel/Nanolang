@@ -525,7 +525,7 @@ impl Parser {
     fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, token_spans: Vec::new(), pos: 0, statement_spans: Vec::new() }
     }
-    fn new_with_spans(tokens: Vec<Token>, token_spans: Vec<SourceSpan>) -> Self {
+    pub(crate) fn new_with_spans(tokens: Vec<Token>, token_spans: Vec<SourceSpan>) -> Self {
         Self { tokens, token_spans, pos: 0, statement_spans: Vec::new() }
     }
     pub(crate) fn statement_spans(&self) -> Vec<SourceSpan> {

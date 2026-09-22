@@ -96,7 +96,7 @@ pub(crate) fn serve() -> Result<(), String> {
                 respond(&mut out, seq, command, json!({"stackFrames":stack_frames,"totalFrames":stack_frames.len()}))?;
             }
             "scopes" => {
-                let frame_id = request.pointer("/arguments/frameId").and_then(Value::as_u64).unwrap_or(1);
+                let frame_id = request.pointer("/arguments/frameId").and_then(Value::as_u64).unwrap_or(1) as usize;
                 respond(&mut out, seq, command, json!({
                     "scopes": [
                         {"name":"Locals","presentationHint":"locals","variablesReference":frame_id * 1000 + 1,"expensive":false}
@@ -107,7 +107,7 @@ pub(crate) fn serve() -> Result<(), String> {
                 let mut variables = Vec::new();
                 if let Some(reference) = request.pointer("/arguments/variablesReference").and_then(Value::as_u64) {
                     if reference >= 1001 {
-                        let frame_id = reference / 1000;
+                        let frame_id = (reference / 1000) as usize;
                         if let Some(active) = session.as_ref() {
                             for (name, value) in active.variables_for_frame(frame_id) {
                                 variables.push(json!({

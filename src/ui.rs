@@ -337,7 +337,7 @@ fn fs(input: VertexOut) -> @location(0) vec4<f32> {
             }
         }
         self.queue.submit(Some(encoder.finish()));
-        output.present();
+        self.queue.present(output);
         Ok(())
     }
 }

@@ -2078,7 +2078,7 @@ impl IrRuntime {
             let (m, _k) = if left_transpose { (lshape[1], lshape[0]) } else { (lshape[0], lshape[1]) };
             let (_k2, n) = if right_transpose { (rshape[1], rshape[0]) } else { (rshape[0], rshape[1]) };
             let tensor = super::Tensor::derived_dtype_on(output, vec![m, n], requires_grad, self.backend.kind(), dtype, TensorOp::MatmulTransposed(left.clone(), right.clone(), left_transpose, right_transpose))?;
-            Ok(Value::Tensor(tensor))
+            return Ok(Value::Tensor(tensor));
         }
 
         if name == "matmul" {
@@ -3289,7 +3289,6 @@ fn backward(
 mod ir_tests {
     use std::collections::HashMap;
     use super::{backward, index_value, IrRuntime, TensorOp, Value};
-    use super::{index_value, IrRuntime, Value};
     use crate::{backend::BackendKind, Tensor};
 
     #[test]
