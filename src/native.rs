@@ -10,6 +10,7 @@ use crate::{ir::{IrInst, IrProgram}, Op, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Number,
+    Boolean,
     Text,
 }
 
@@ -86,7 +87,7 @@ impl NativeModule {
             }
         }
 
-        let (entry_states, max_stack) = analyze_stack(code, name, &locals)?;
+        let (entry_states, max_stack, local_kinds) = analyze_stack(code, name, &locals, params)?;
 
         let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
@@ -268,6 +269,15 @@ impl NativeModule {
                                 stack_offset(slot)
                             ));
                         }
+                        Kind::Boolean => {
+                            let zero = self.add_float(0.0);
+                            let false_label = format!(".L{symbol}_bool_false_{ip}");
+                            let end_label = format!(".L{symbol}_bool_end_{ip}");
+                            self.text.push_str(&format!(
+                                "    movsd {}(%rbp), %xmm0\n    ucomisd {zero}(%rip), %xmm0\n    je {false_label}\n    leaq nano_true(%rip), %rdi\n    jmp {end_label}\n{false_label}:\n    leaq nano_false(%rip), %rdi\n{end_label}:\n    call puts@PLT\n",
+                                stack_offset(slot)
+                            ));
+                        }
                         Kind::Text => {
                             self.text.push_str(&format!(
                                 "    movq {}(%rbp), %rdi\n    call puts@PLT\n",
@@ -336,6 +346,8 @@ impl NativeModule {
         let mut text = self.text;
         text.push_str("\n    .section .rodata\n");
         text.push_str("nano_fmt:\n    .byte 37,103,10,0\n");
+        text.push_str("nano_true:\n    .byte 116,114,117,101,0\n");
+        text.push_str("nano_false:\n    .byte 102,97,108,115,101,0\n");
         for (i, value) in self.float_constants.iter().enumerate() {
             text.push_str(&format!(".LCF{i}:\n    .double {value:.17e}\n"));
         }
@@ -359,10 +371,15 @@ fn analyze_stack(
     code: &[IrInst],
     name: &str,
     locals: &HashMap<String, usize>,
-) -> Result<(Vec<Option<Vec<Kind>>>, usize), String> {
+    params: &[String],
+) -> Result<(Vec<Option<Vec<Kind>>>, usize, HashMap<String, Kind>), String> {
     use std::collections::VecDeque;
 
     let mut states: Vec<Option<Vec<Kind>>> = vec![None; code.len()];
+    let mut local_kinds = HashMap::<String, Kind>::new();
+    for param in params {
+        local_kinds.insert(param.clone(), Kind::Number);
+    }
     let mut work = VecDeque::new();
     if !code.is_empty() {
         states[0] = Some(Vec::new());
@@ -380,8 +397,11 @@ fn analyze_stack(
         let mut next = state.clone();
 
         match &code[ip] {
-            IrInst::Const(Value::Number(_)) | IrInst::Const(Value::Boolean(_)) => {
+            IrInst::Const(Value::Number(_)) => {
                 next.push(Kind::Number);
+            }
+            IrInst::Const(Value::Boolean(_)) => {
+                next.push(Kind::Boolean);
             }
             IrInst::Const(Value::Text(_)) => {
                 next.push(Kind::Text);
@@ -393,28 +413,72 @@ fn analyze_stack(
                 if !locals.contains_key(var) {
                     return Err(format!("Nano native: variável '{var}' não é conhecida em '{name}'"));
                 }
-                next.push(Kind::Number);
+                let kind = local_kinds.get(var).copied().unwrap_or(Kind::Number);
+                next.push(kind);
             }
             IrInst::Store(var) => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
-                if value != Kind::Number {
-                    return Err(format!("Nano native: variável '{var}' precisa ser Number"));
+                if !matches!(value, Kind::Number | Kind::Boolean) {
+                    return Err(format!("Nano native: variável '{var}' precisa ser Number ou Boolean"));
+                }
+                match local_kinds.get(var).copied() {
+                    None => { local_kinds.insert(var.clone(), value); }
+                    Some(previous) if previous == value => {}
+                    Some(previous) => {
+                        return Err(format!(
+                            "Nano native: variável '{var}' muda de tipo: {:?} -> {:?}",
+                            previous, value
+                        ));
+                    }
                 }
             }
             IrInst::Binary(op) => {
                 let right = next.pop().ok_or_else(|| format!("Nano native: binary sem direito em '{name}'"))?;
                 let left = next.pop().ok_or_else(|| format!("Nano native: binary sem esquerdo em '{name}'"))?;
-                if left != Kind::Number || right != Kind::Number {
-                    return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                match op {
+                    Op::Eq | Op::Ne => {
+                        if left != right || !matches!(left, Kind::Number | Kind::Boolean) {
+                            return Err(format!("Nano native: comparação {:?} exige valores compatíveis", op));
+                        }
+                        next.push(Kind::Boolean);
+                    }
+                    Op::Gt | Op::Ge | Op::Lt | Op::Le => {
+                        if left != Kind::Number || right != Kind::Number {
+                            return Err(format!("Nano native: comparação {:?} exige Numbers", op));
+                        }
+                        next.push(Kind::Boolean);
+                    }
+                    Op::And | Op::Or => {
+                        if !matches!(left, Kind::Number | Kind::Boolean)
+                            || !matches!(right, Kind::Number | Kind::Boolean) {
+                            return Err(format!("Nano native: lógica {:?} exige valores booleanos ou numéricos", op));
+                        }
+                        next.push(Kind::Boolean);
+                    }
+                    _ => {
+                        if left != Kind::Number || right != Kind::Number {
+                            return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                        }
+                        next.push(Kind::Number);
+                    }
                 }
-                next.push(Kind::Number);
             }
             IrInst::Unary(op) => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: unary sem valor em '{name}'"))?;
-                if value != Kind::Number {
-                    return Err(format!("Nano native: operador {:?} exige Number", op));
+                match op {
+                    crate::UnaryOp::Neg => {
+                        if value != Kind::Number {
+                            return Err(format!("Nano native: operador {:?} exige Number", op));
+                        }
+                        next.push(Kind::Number);
+                    }
+                    crate::UnaryOp::Not => {
+                        if !matches!(value, Kind::Number | Kind::Boolean) {
+                            return Err(format!("Nano native: operador {:?} exige valor lógico", op));
+                        }
+                        next.push(Kind::Boolean);
+                    }
                 }
-                next.push(Kind::Number);
             }
             IrInst::FusedMulAdd => {
                 for _ in 0..3 {
@@ -445,15 +509,15 @@ fn analyze_stack(
             }
             IrInst::JumpIfFalse(_) => {
                 let condition = next.pop().ok_or_else(|| format!("Nano native: condição vazia em '{name}'"))?;
-                if condition != Kind::Number {
-                    return Err(format!("Nano native: condição precisa ser Number em '{name}'"));
+                if !matches!(condition, Kind::Number | Kind::Boolean) {
+                    return Err(format!("Nano native: condição precisa ser Number ou Boolean em '{name}'"));
                 }
             }
             IrInst::Jump(_) => {}
             IrInst::Return => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
-                if value != Kind::Number {
-                    return Err(format!("Nano native: retorno de '{name}' deve ser Number"));
+                if !matches!(value, Kind::Number | Kind::Boolean) {
+                    return Err(format!("Nano native: retorno de '{name}' deve ser Number ou Boolean"));
                 }
             }
             IrInst::MakeList(_)
@@ -503,7 +567,7 @@ fn analyze_stack(
         }
     }
 
-    Ok((states, max_stack))
+    Ok((states, max_stack, local_kinds))
 }
 
 fn sanitize(name: &str) -> String {
