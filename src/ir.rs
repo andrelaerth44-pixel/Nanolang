@@ -691,6 +691,39 @@ impl IrRuntime {
             return Ok(Value::Null);
         }
 
+        if name == "abs" || name == "sqrt" || name == "floor" || name == "ceil" || name == "round"
+            || name == "sin" || name == "cos" || name == "tan" || name == "exp" || name == "log" {
+            if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Number")); }
+            let value = number_arg(&args[0], "número")?;
+            let output = match name {
+                "abs" => value.abs(),
+                "sqrt" => value.sqrt(),
+                "floor" => value.floor(),
+                "ceil" => value.ceil(),
+                "round" => value.round(),
+                "sin" => value.sin(),
+                "cos" => value.cos(),
+                "tan" => value.tan(),
+                "exp" => value.exp(),
+                _ => value.ln(),
+            };
+            return Ok(Value::Number(output));
+        }
+
+        if name == "pow" {
+            if args.len() != 2 { return Err("Nano: pow() recebe base e expoente".into()); }
+            let base = number_arg(&args[0], "base")?;
+            let exponent = number_arg(&args[1], "expoente")?;
+            return Ok(Value::Number(base.powf(exponent)));
+        }
+
+        if name == "min" || name == "max" {
+            if args.len() != 2 { return Err(format!("Nano: {name}() recebe 2 Numbers")); }
+            let a = number_arg(&args[0], "a")?;
+            let b = number_arg(&args[1], "b")?;
+            return Ok(Value::Number(if name == "min" { a.min(b) } else { a.max(b) }));
+        }
+
         if name == "to_text" {
             if args.len() != 1 { return Err("Nano: to_text() recebe 1 argumento".into()); }
             return Ok(Value::Text(args[0].show()));
