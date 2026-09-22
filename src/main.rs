@@ -842,6 +842,44 @@ impl Parser {
         Ok(expr)
     }
 }
+fn is_semantic_builtin_target(name: &str) -> bool {
+    if name.starts_with("std.") {
+        return true;
+    }
+    matches!(name,
+        "print" | "assert" | "ok" | "err" | "is_ok" | "unwrap" | "error"
+        | "len" | "range" | "to_text" | "to_number" | "upper" | "lower" | "trim"
+        | "contains" | "starts_with" | "ends_with" | "replace" | "substring" | "char_at"
+        | "split" | "join" | "append"
+        | "abs" | "sqrt" | "floor" | "ceil" | "round" | "sin" | "cos" | "tan" | "exp"
+        | "log" | "pow" | "min" | "max"
+        | "tensor" | "parameter" | "zeros" | "shape" | "matmul" | "matmul_transposed"
+        | "sum" | "mean" | "grad" | "step" | "adam" | "cast" | "dtype" | "device"
+        | "memory_bytes" | "backend" | "backend_info"
+        | "fs_read_text" | "fs_write_text" | "fs_append_text" | "fs_exists" | "fs_list"
+        | "fs_mkdir" | "fs_remove" | "fs_is_file" | "fs_is_dir" | "fs_cwd"
+        | "path_join" | "path_basename" | "path_dirname" | "path_extension"
+        | "process_spawn" | "process_wait" | "process_output"
+        | "os_cwd" | "os_args"
+        | "env_get" | "env_set"
+        | "time_now_ms" | "time_sleep_ms" | "thread_sleep_ms" | "thread_spawn" | "thread_join"
+        | "task_spawn" | "task_join" | "async_spawn" | "async_join" | "async_select"
+        | "async_all" | "async_sleep_ms" | "thread_yield"
+        | "channel" | "send" | "recv" | "close_channel"
+        | "net_tcp_connect" | "net_tcp_listen" | "net_tcp_accept" | "net_tcp_send"
+        | "net_tcp_recv" | "net_tcp_close" | "net_http_get"
+        | "http_request" | "http_post" | "http_get_structured" | "https_get"
+        | "json_encode" | "json_decode" | "crypto_sha256" | "crypto_hmac_sha256"
+        | "sync_mutex_new" | "sync_mutex_get" | "sync_mutex_set" | "sync_mutex_swap"
+        | "sync_mutex_close" | "sync_semaphore_new" | "sync_semaphore_acquire"
+        | "sync_semaphore_release" | "sync_semaphore_close" | "sync_channel_new"
+        | "sync_channel_send" | "sync_channel_recv" | "sync_channel_recv_timeout"
+        | "sync_channel_try_recv" | "sync_channel_close"
+        | "ui_window" | "ui_set_title" | "ui_close" | "ui_poll_event" | "ui_clear"
+        | "ui_rect" | "ui_button" | "ui_text" | "ui_vbox"
+    )
+}
+
 
 struct Semantic {
     vars: HashMap<String, Type>,
@@ -1120,10 +1158,14 @@ impl Semantic {
                 }
             }
             Expr::Call(target, args) => {
-                let target_type = self.expr_type(target)?;
+                let qualified = qualified_name(target);
+                let target_type = match qualified.as_deref() {
+                    Some(name) if is_semantic_builtin_target(name) => Type::Function,
+                    _ => self.expr_type(target)?,
+                };
                 for arg in args { self.expr_type(arg)?; }
 
-                let raw_name = match qualified_name(target) {
+                let raw_name = match qualified {
                     Some(name) => name,
                     None => {
                         if target_type == Type::Function || target_type == Type::Any {
