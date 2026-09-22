@@ -1,4 +1,4 @@
-# Nano self-hosted parser v0.1
+# Nano self-hosted parser v0.2
 # Consome os tokens de selfhost/lexer.nano e produz uma AST em Objects/Lists.
 
 function ok(index, node) {
@@ -92,12 +92,37 @@ function parse_statement(tokens, index) {
             return parse_function(tokens, index)
         }
 
-        next = token(tokens, index + 1)
-        if next.kind == "symbol" && next.text == "=" {
-            expr = parse_expression(tokens, index + 2)
-            if !expr.ok { return expr }
-            return ok(expr.index, {kind: "assign", name: t.text, value: expr.node})
+        expr = parse_expression(tokens, index)
+        if !expr.ok { return expr }
+
+        if symbol(tokens, expr.index, "=") {
+            value = parse_expression(tokens, expr.index + 1)
+            if !value.ok { return value }
+
+            if expr.node.kind == "ident" {
+                return ok(value.index, {kind: "assign", name: expr.node.name, value: value.node})
+            }
+            if expr.node.kind == "index" {
+                return ok(value.index, {
+                    kind: "assign_index",
+                    target: expr.node.target,
+                    index: expr.node.index,
+                    value: value.node
+                })
+            }
+            if expr.node.kind == "field" {
+                return ok(value.index, {
+                    kind: "assign_field",
+                    target: expr.node.target,
+                    name: expr.node.name,
+                    value: value.node
+                })
+            }
+
+            return fail(expr.index, "destino de atribuição inválido")
         }
+
+        return ok(expr.index, {kind: "expr", value: expr.node})
     }
 
     expr = parse_expression(tokens, index)
@@ -458,6 +483,9 @@ function parse_primary(tokens, index) {
         }
         if t.text == "false" {
             return ok(index + 1, {kind: "boolean", value: false})
+        }
+        if t.text == "null" {
+            return ok(index + 1, {kind: "null"})
         }
         return ok(index + 1, {kind: "ident", name: t.text})
     }
