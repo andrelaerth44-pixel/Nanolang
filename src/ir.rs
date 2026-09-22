@@ -720,6 +720,7 @@ impl IrRuntime {
                 IrInst::Const(value) => stack.push(value.clone()),
                 IrInst::Load(name) => {
                     let value = self.vars.get(name).cloned()
+                        .or_else(|| is_builtin_name(name).then(|| Value::Function(name.clone())))
                         .ok_or_else(|| format!("Nano: variável '{name}' não definida"))?;
                     stack.push(value);
                 }
@@ -3585,6 +3586,7 @@ impl DebugSession {
                     let frame = self.current_frame().unwrap();
                     frame.locals.get(&name).cloned()
                         .or_else(|| self.runtime.vars.get(&name).cloned())
+                        .or_else(|| is_builtin_name(&name).then(|| Value::Function(name.clone())))
                         .ok_or_else(|| format!("Nano debug: variável '{name}' não definida"))?
                 };
                 self.current_frame_mut().unwrap().stack.push(value);
