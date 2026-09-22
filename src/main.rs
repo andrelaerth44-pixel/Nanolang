@@ -1,6 +1,6 @@
 mod ir;
 
-use std::{env, fs, process};
+use std::{cell::RefCell, env, fs, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -109,22 +109,56 @@ impl Lexer {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TensorOpKind {
+    Add, Sub, Mul, Div,
+}
+
+type TensorRef = Rc<RefCell<Tensor>>;
+
+#[derive(Debug, Clone)]
+enum TensorOp {
+    Leaf,
+    Elementwise(TensorOpKind, TensorRef, TensorRef),
+    Matmul(TensorRef, TensorRef),
+    Sum(TensorRef),
+    Mean(TensorRef),
+}
+
+static NEXT_TENSOR_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_tensor_id() -> u64 {
+    NEXT_TENSOR_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Debug)]
 struct Tensor {
+    id: u64,
     data: Vec<f32>,
     shape: Vec<usize>,
+    requires_grad: bool,
+    op: TensorOp,
 }
 
 impl Tensor {
-    fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, String> {
+    fn new(data: Vec<f32>, shape: Vec<usize>, requires_grad: bool) -> Result<TensorRef, String> {
         let expected = shape.iter().copied().product::<usize>();
         if expected != data.len() {
-            return Err(format!(
-                "Nano: tensor tem {} valores, mas a forma exige {}",
-                data.len(), expected
-            ));
+            return Err(format!("Nano: tensor tem {} valores, mas a forma exige {}", data.len(), expected));
         }
-        Ok(Self { data, shape })
+        Ok(Rc::new(RefCell::new(Self {
+            id: next_tensor_id(), data, shape, requires_grad, op: TensorOp::Leaf,
+        })))
+    }
+
+    fn derived(data: Vec<f32>, shape: Vec<usize>, requires_grad: bool, op: TensorOp) -> Result<TensorRef, String> {
+        let expected = shape.iter().copied().product::<usize>();
+        if expected != data.len() {
+            return Err(format!("Nano: tensor derivado tem {} valores, mas a forma exige {}", data.len(), expected));
+        }
+        Ok(Rc::new(RefCell::new(Self {
+            id: next_tensor_id(), data, shape, requires_grad, op,
+        })))
     }
 
     fn show(&self) -> String {
@@ -132,10 +166,25 @@ impl Tensor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum Value {
     Number(f64), Text(String), Boolean(bool),
-    List(Vec<Value>), Object(HashMap<String, Value>), Tensor(Tensor), Null
+    List(Vec<Value>), Object(HashMap<String, Value>), Tensor(TensorRef), Null
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Number(a), Self::Number(b)) => a == b,
+            (Self::Text(a), Self::Text(b)) => a == b,
+            (Self::Boolean(a), Self::Boolean(b)) => a == b,
+            (Self::List(a), Self::List(b)) => a == b,
+            (Self::Object(a), Self::Object(b)) => a == b,
+            (Self::Tensor(a), Self::Tensor(b)) => a.borrow().id == b.borrow().id,
+            (Self::Null, Self::Null) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -146,7 +195,7 @@ impl Value {
             Self::Text(v) => !v.is_empty(),
             Self::List(v) => !v.is_empty(),
             Self::Object(v) => !v.is_empty(),
-            Self::Tensor(v) => !v.data.is_empty(),
+            Self::Tensor(v) => !v.borrow().data.is_empty(),
             Self::Null => false,
         }
     }
@@ -162,7 +211,7 @@ impl Value {
                 items.sort();
                 format!("{{{}}}", items.join(", "))
             }
-            Self::Tensor(v) => v.show(),
+            Self::Tensor(v) => v.borrow().show(),
             Self::Null => "null".into(),
         }
     }
@@ -635,12 +684,48 @@ impl Semantic {
                     }
                     return Ok(Type::List);
                 }
+                if name == "parameter" {
+                    if args.len() != 2 { return Err("Nano: parameter() recebe dados e shape".into()); }
+                    let data_type = self.expr_type(&args[0])?;
+                    let shape_type = self.expr_type(&args[1])?;
+                    if data_type != Type::List || shape_type != Type::List {
+                        return Err("Nano: parameter() requer listas de dados e shape".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
                 if name == "matmul" {
                     if args.len() != 2 { return Err("Nano: matmul() recebe 2 tensores".into()); }
                     let left = self.expr_type(&args[0])?;
                     let right = self.expr_type(&args[1])?;
                     if (left != Type::Tensor && left != Type::Any) || (right != Type::Tensor && right != Type::Any) {
                         return Err("Nano: matmul() requer Tensor, Tensor".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
+                if name == "sum" || name == "mean" {
+                    if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 tensor")); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Tensor && ty != Type::Any {
+                        return Err(format!("Nano: {name}() requer Tensor, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::Tensor);
+                }
+                if name == "grad" {
+                    if args.len() != 2 { return Err("Nano: grad() recebe loss e parâmetro".into()); }
+                    let loss = self.expr_type(&args[0])?;
+                    let param = self.expr_type(&args[1])?;
+                    if (loss != Type::Tensor && loss != Type::Any) || (param != Type::Tensor && param != Type::Any) {
+                        return Err("Nano: grad() requer Tensor, Tensor".into());
+                    }
+                    return Ok(Type::Tensor);
+                }
+                if name == "step" {
+                    if args.len() != 3 { return Err("Nano: step() recebe parâmetro, gradiente e taxa".into()); }
+                    let param = self.expr_type(&args[0])?;
+                    let grad = self.expr_type(&args[1])?;
+                    let rate = self.expr_type(&args[2])?;
+                    if (param != Type::Tensor && param != Type::Any) || (grad != Type::Tensor && grad != Type::Any) || (rate != Type::Number && rate != Type::Any) {
+                        return Err("Nano: step() requer Tensor, Tensor, Number".into());
                     }
                     return Ok(Type::Tensor);
                 }
