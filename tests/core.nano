@@ -19,3 +19,11 @@ assert(!std.fs.exists(path), "fs-remove-exists")
 
 assert(std.math.pow(2, 8) == 256, "std-math-pow")
 assert(std.env.get("NANO_UNSET_TEST") == null, "std-env-get-missing")
+
+function square(value) {
+    return value * value
+}
+
+task = task_spawn("square", [6])
+task_result = task_join(task)
+assert(task_result == 36, "task-concurrency")
