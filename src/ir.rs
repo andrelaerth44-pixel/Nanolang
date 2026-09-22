@@ -56,8 +56,6 @@ struct IterState {
 }
 
 #[derive(Debug, Clone)]
-
-#[derive(Clone, Debug)]
 enum TaskValue {
     Number(f64),
     Text(String),
