@@ -202,7 +202,7 @@ pub(crate) struct Compiler {
 pub(crate) struct Optimizer;
 
 impl Optimizer {
-    pub(crate) fn new() -> Self { Self { break_targets: Vec::new() } }
+    pub(crate) fn new() -> Self { Self }
 
     pub(crate) fn optimize_program(&mut self, mut program: IrProgram) -> IrProgram {
         program.code = self.optimize_code(program.code);
