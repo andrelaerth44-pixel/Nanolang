@@ -425,7 +425,7 @@ impl IrRuntime {
             }
             let data = list_numbers(&args[0], "dados")?;
             let shape = list_shape(&args[1])?;
-            return Ok(Value::Tensor(super::Tensor::new(data, shape, false)?));
+            return Ok(Value::Tensor(super::Tensor::new_on(data, shape, false, self.backend.kind())?));
         }
 
         if name == "parameter" {
@@ -434,7 +434,7 @@ impl IrRuntime {
             }
             let data = list_numbers(&args[0], "dados")?;
             let shape = list_shape(&args[1])?;
-            return Ok(Value::Tensor(super::Tensor::new(data, shape, true)?));
+            return Ok(Value::Tensor(super::Tensor::new_on(data, shape, true, self.backend.kind())?));
         }
 
         if name == "zeros" {
@@ -443,7 +443,7 @@ impl IrRuntime {
             }
             let shape = list_shape(&args[0])?;
             let size = shape.iter().copied().product::<usize>();
-            return Ok(Value::Tensor(super::Tensor::new(vec![0.0; size], shape, false)?));
+            return Ok(Value::Tensor(super::Tensor::new_on(vec![0.0; size], shape, false, self.backend.kind())?));
         }
 
         if name == "shape" {
@@ -589,7 +589,7 @@ impl IrRuntime {
             }
             (Value::Tensor(tensor), Value::Number(n), Op::Mul) |
             (Value::Number(n), Value::Tensor(tensor), Op::Mul) => {
-                let scalar = super::Tensor::new(vec![*n as f32; tensor.borrow().data.len()], tensor.borrow().shape.clone(), false)?;
+                let scalar = super::Tensor::new_on(vec![*n as f32; tensor.borrow().data.len()], tensor.borrow().shape.clone(), false, self.backend.kind())?;
                 Ok(Value::Tensor(tensor_elementwise(tensor, &scalar, TensorOpKind::Mul, self.backend.as_ref())?))
             }
             _ => binary(a, op, b),
@@ -703,6 +703,16 @@ fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Va
     let (lshape, rshape, requires_grad) = {
         let l = left.borrow();
         let r = right.borrow();
+        if l.device != backend.kind() || r.device != backend.kind() {
+            return Err(format!(
+                "Nano: tensors estão no dispositivo {} e o backend ativo é {}",
+                if l.device != backend.kind() { l.device.name() } else { r.device.name() },
+                backend.kind().name()
+            ));
+        }
+        if l.device != r.device {
+            return Err("Nano: matmul() requer tensors no mesmo dispositivo".into());
+        }
         (l.shape.clone(), r.shape.clone(), l.requires_grad || r.requires_grad)
     };
 
@@ -727,6 +737,7 @@ fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Va
         out,
         vec![m, n],
         requires_grad,
+        backend.kind(),
         TensorOp::Matmul(std::rc::Rc::clone(left), std::rc::Rc::clone(right)),
     )?))
 }
@@ -742,6 +753,15 @@ fn tensor_elementwise(
     let right = b.borrow();
     if left.shape != right.shape {
         return Err("Nano: Tensor elementwise requer shapes iguais".into());
+    }
+    if left.device != backend.kind() || right.device != backend.kind() {
+        return Err(format!(
+            "Nano: tensors estão no dispositivo errado para o backend {}",
+            backend.kind().name()
+        ));
+    }
+    if left.device != right.device {
+        return Err("Nano: Tensor elementwise requer o mesmo dispositivo".into());
     }
 
     let backend_op = match op {
@@ -762,6 +782,7 @@ fn tensor_elementwise(
         data,
         shape,
         requires_grad,
+        backend.kind(),
         TensorOp::Elementwise(op, std::rc::Rc::clone(a), std::rc::Rc::clone(b)),
     )?)
 }
@@ -776,12 +797,25 @@ fn reduce_value(
         _ => return Err("Nano: redução requer Tensor".into()),
     };
     let borrowed = tensor.borrow();
+    if borrowed.device != backend.kind() {
+        return Err(format!(
+            "Nano: tensor está no dispositivo {}, mas o backend ativo é {}",
+            borrowed.device.name(),
+            backend.kind().name()
+        ));
+    }
     let result = backend.reduce(&borrowed.data, mean)
         .map_err(|e| format!("Nano: backend {}: {}", backend.kind().name(), e))?;
     let op = if mean { TensorOp::Mean(std::rc::Rc::clone(&tensor)) } else { TensorOp::Sum(std::rc::Rc::clone(&tensor)) };
     let requires_grad = borrowed.requires_grad;
     drop(borrowed);
-    Ok(Value::Tensor(super::Tensor::derived(vec![result], vec![1], requires_grad, op)?))
+    Ok(Value::Tensor(super::Tensor::derived_on(
+        vec![result],
+        vec![1],
+        requires_grad,
+        backend.kind(),
+        op,
+    )?))
 }
 
 fn gradient_value(loss: &Value, parameter: &Value) -> Result<Value, String> {
@@ -801,7 +835,8 @@ fn gradient_value(loss: &Value, parameter: &Value) -> Result<Value, String> {
 
     let id = param_ref.borrow().id;
     let data = grads.get(&id).cloned().unwrap_or_else(|| vec![0.0; param_ref.borrow().data.len()]);
-    Ok(Value::Tensor(super::Tensor::new(data, output_shape, false)?))
+    let device = param_ref.borrow().device;
+    Ok(Value::Tensor(super::Tensor::new_on(data, output_shape, false, device)?))
 }
 
 fn step_value(parameter: &Value, gradient: &Value, rate: &Value) -> Result<Value, String> {
