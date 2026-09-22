@@ -357,6 +357,27 @@ impl GpuBackend {
         self.dispatch_resident(pipeline,inputs,uniform,(groups,1,1),output);
     }
 
+    fn dispatch_inplace(&self,pipeline:&wgpu::ComputePipeline,inputs:&[&wgpu::Buffer],uniform:&wgpu::Buffer,groups:u32){
+        let mut entries=Vec::with_capacity(inputs.len()+1);
+        for(i,buffer)in inputs.iter().enumerate(){
+            entries.push(wgpu::BindGroupEntry{binding:i as u32,resource:buffer.as_entire_binding()});
+        }
+        entries.push(wgpu::BindGroupEntry{binding:inputs.len() as u32,resource:uniform.as_entire_binding()});
+        let bind_group=self.device.create_bind_group(&wgpu::BindGroupDescriptor{
+            label:Some("nano-gpu-inplace-bind-group"),
+            layout:&pipeline.get_bind_group_layout(0),
+            entries:&entries
+        });
+        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{label:Some("nano-gpu-inplace-command")});
+        {
+            let mut pass=encoder.begin_compute_pass(&wgpu::ComputePassDescriptor{label:Some("nano-gpu-inplace"),timestamp_writes:None});
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0,&bind_group,&[]);
+            pass.dispatch_workgroups(groups,1,1);
+        }
+        self.queue.submit(Some(encoder.finish()));
+    }
+
     fn bytes_f32(data: &[f32]) -> Vec<u8> { data.iter().flat_map(|v| v.to_ne_bytes()).collect() }
     fn bytes_u32(data: &[u32]) -> Vec<u8> { data.iter().flat_map(|v| v.to_ne_bytes()).collect() }
 
@@ -564,7 +585,7 @@ impl TensorBackend for GpuBackend {
             &[0;4],
         ].concat(),wgpu::BufferUsages::UNIFORM);
         self.dispatch_resident_1(&self.fill,&[],&params2,((elements as u32)+255)/256,&out);
-        drop(params);
+
         Ok(())
     }
 
@@ -624,17 +645,25 @@ impl TensorBackend for GpuBackend {
         let grad=self.resident.borrow().get(&grad_id).ok_or_else(||BackendError("gradiente não está residente na GPU".into()))?.buffer.clone();
         let bytes=[(elements as u32).to_ne_bytes().as_slice(),lr.to_ne_bytes().as_slice(),&[0;4],&[0;4]].concat();
         let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
-        self.dispatch_resident_1(&self.step,&[&param,&grad],&params,((elements as u32)+255)/256,&param);
+        self.dispatch_inplace(&self.step,&[&param,&grad],&params,((elements as u32)+255)/256);
         Ok(())
     }
 
     fn adam_resident_async(&self,param_id:u64,grad_id:u64,elements:usize,lr:f32,step:u32)->Result<(),BackendError>{
         let param=self.resident.borrow().get(&param_id).ok_or_else(||BackendError("parâmetro não está residente na GPU".into()))?.buffer.clone();
         let grad=self.resident.borrow().get(&grad_id).ok_or_else(||BackendError("gradiente não está residente na GPU".into()))?.buffer.clone();
-        let m_id=param_id.wrapping_mul(2).wrapping_add(1);
-        let v_id=param_id.wrapping_mul(2).wrapping_add(2);
+        let m_id=(1u64<<63)|param_id.wrapping_mul(2);
+        let v_id=m_id.wrapping_add(1);
+        let m_exists=self.resident.borrow().contains_key(&m_id);
+        let v_exists=self.resident.borrow().contains_key(&v_id);
         let m=self.resident_buffer(m_id,elements)?;
         let v=self.resident_buffer(v_id,elements)?;
+        if !m_exists {
+            self.fill_resident_async(elements,0.0,m_id)?;
+        }
+        if !v_exists {
+            self.fill_resident_async(elements,0.0,v_id)?;
+        }
         let bytes=[
             (elements as u32).to_ne_bytes().as_slice(),
             step.to_ne_bytes().as_slice(),
@@ -642,11 +671,11 @@ impl TensorBackend for GpuBackend {
             &[0;4],
         ].concat();
         let params=self.create_buffer(&bytes,wgpu::BufferUsages::UNIFORM);
-        self.dispatch_resident(&self.adam,&[&param,&grad,&m,&v],&params,(((elements as u32)+255)/256,1,1),&param);
+        self.dispatch_inplace(&self.adam,&[&param,&grad,&m,&v],&params,((elements as u32)+255)/256);
         Ok(())
     }
 
-    fn reduce_resident_async(&self,input_id:u64,elements:usize,_mean:bool,output_id:u64)->Result<(),BackendError>{
+    fn reduce_resident_async(&self,input_id:u64,elements:usize,mean:bool,output_id:u64)->Result<(),BackendError>{
         let input=self.resident.borrow().get(&input_id).ok_or_else(||BackendError("tensor de redução não está residente na GPU".into()))?.buffer.clone();
         let output=self.resident_buffer(output_id,1)?;
         let params=self.create_buffer(&Self::bytes_u32(&[elements as u32,if mean{1}else{0},0,0]),wgpu::BufferUsages::UNIFORM);

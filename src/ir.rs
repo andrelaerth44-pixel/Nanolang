@@ -682,6 +682,8 @@ impl IrRuntime {
             return Ok(Value::Tensor(param));
         }
 
+        self.sync_tensor_host(&param)?;
+        self.sync_tensor_host(&grad)?;
         let state = self.adam.entry(id).or_insert_with(|| AdamState {
             step: 0,
             m: vec![0.0; len],
@@ -698,8 +700,6 @@ impl IrRuntime {
         let beta2 = 0.999_f32;
         let eps = 1e-8_f32;
 
-        self.sync_tensor_host(&param)?;
-        self.sync_tensor_host(&grad)?;
         let mut data = param.borrow().data_f32();
         let gradient = grad.borrow().data_f32();
         for i in 0..data.len() {
@@ -741,7 +741,7 @@ impl IrRuntime {
         if self.backend.kind()==backend::BackendKind::Gpu {
             self.backend.fused_mul_add_resident_async(a.id,b.id,c.id,&shape,output_id)
                 .map_err(|e|format!("Nano: backend {}: {}",self.backend.kind().name(),e))?;
-            let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0;shape.iter().copied().product()],requires_grad,self.backend.kind(),dtype,op)?;
+            let out=super::Tensor::remote_with_id(output_id,shape.clone(),requires_grad,self.backend.kind(),dtype,op)?;
             out.borrow_mut().mark_host_stale();
             return Ok(Value::Tensor(out));
         }
@@ -973,7 +973,7 @@ fn matmul_values(a: &Value, b: &Value, backend: &dyn TensorBackend) -> Result<Va
     if backend.kind()==backend::BackendKind::Gpu {
         backend.matmul_resident_async(left.borrow().id,&lshape,right.borrow().id,&rshape,output_id)
             .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
-        let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0;m*n],requires_grad,backend.kind(),dtype,op)?;
+        let out=super::Tensor::remote_with_id(output_id,vec![m,n],requires_grad,backend.kind(),dtype,op)?;
         out.borrow_mut().mark_host_stale();
         return Ok(Value::Tensor(out));
     }
@@ -1023,7 +1023,7 @@ fn tensor_elementwise(
             .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
         drop(left);drop(right);
         let elements=shape.iter().copied().product::<usize>();
-        let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0;elements],requires_grad,backend.kind(),dtype,op_node)?;
+        let out=super::Tensor::remote_with_id(output_id,shape.clone(),requires_grad,backend.kind(),dtype,op_node)?;
         out.borrow_mut().mark_host_stale();
         return Ok(out);
     }
@@ -1060,7 +1060,7 @@ fn reduce_value(
         backend.reduce_resident_async(input_id,elements,mean,output_id)
             .map_err(|e|format!("Nano: backend {}: {}",backend.kind().name(),e))?;
         drop(borrowed);
-        let out=super::Tensor::derived_dtype_on_with_id(output_id,vec![0.0],requires_grad,backend.kind(),dtype,op)?;
+        let out=super::Tensor::remote_with_id(output_id,vec![1],requires_grad,backend.kind(),dtype,op)?;
         out.borrow_mut().mark_host_stale();
         return Ok(Value::Tensor(out));
     }
