@@ -1061,7 +1061,7 @@ impl Semantic {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
                     return Ok(Type::Number);
                 }
-                if matches!(name.as_str(), "abs" | "sqrt" | "floor" | "ceil" | "round" | "sin" | "cos" | "tan" | "exp" | "log") {
+                if matches!(name, "abs" | "sqrt" | "floor" | "ceil" | "round" | "sin" | "cos" | "tan" | "exp" | "log") {
                     if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Number")); }
                     let ty = self.expr_type(&args[0])?;
                     if ty != Type::Number && ty != Type::Any {
@@ -1091,7 +1091,7 @@ impl Semantic {
                     }
                     return Ok(Type::Number);
                 }
-                if matches!(name.as_str(), "upper" | "lower" | "trim") {
+                if matches!(name, "upper" | "lower" | "trim") {
                     if args.len() != 1 { return Err(format!("Nano: {name}() recebe 1 Text")); }
                     let ty = self.expr_type(&args[0])?;
                     if ty != Type::Text && ty != Type::Any {
@@ -1099,7 +1099,7 @@ impl Semantic {
                     }
                     return Ok(Type::Text);
                 }
-                if matches!(name.as_str(), "contains" | "starts_with" | "ends_with") {
+                if matches!(name, "contains" | "starts_with" | "ends_with") {
                     if args.len() != 2 { return Err(format!("Nano: {name}() recebe 2 Text")); }
                     let a = self.expr_type(&args[0])?;
                     let b = self.expr_type(&args[1])?;
