@@ -1836,7 +1836,7 @@ impl IrRuntime {
                 .map_err(|e| format!("Nano: backend {}: {e}", self.backend.kind().name()))?;
             let (m, _k) = if left_transpose { (lshape[1], lshape[0]) } else { (lshape[0], lshape[1]) };
             let (_k2, n) = if right_transpose { (rshape[1], rshape[0]) } else { (rshape[0], rshape[1]) };
-            let tensor = super::Tensor::derived_dtype_on(output, vec![m, n], requires_grad, self.backend.kind(), dtype, TensorOp::Matmul(left.clone(), right.clone()))?;
+            let tensor = super::Tensor::derived_dtype_on(output, vec![m, n], requires_grad, self.backend.kind(), dtype, TensorOp::MatmulTransposed(left.clone(), right.clone(), left_transpose, right_transpose))?;
             Ok(Value::Tensor(tensor))
         }
 
@@ -2480,6 +2480,10 @@ fn sync_graph_host(
             sync_graph_host(&right,backend,seen)?;
         }
         TensorOp::Matmul(left,right) => {
+            sync_graph_host(&left,backend,seen)?;
+            sync_graph_host(&right,backend,seen)?;
+        }
+        TensorOp::MatmulTransposed(left,right,_,_) => {
             sync_graph_host(&left,backend,seen)?;
             sync_graph_host(&right,backend,seen)?;
         }
