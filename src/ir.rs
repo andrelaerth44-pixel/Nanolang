@@ -310,8 +310,46 @@ impl IrRuntime {
                 Value::Text(v) => Ok(Value::Number(v.chars().count() as f64)),
                 Value::List(v) => Ok(Value::Number(v.len() as f64)),
                 Value::Object(v) => Ok(Value::Number(v.len() as f64)),
-                _ => Err("Nano: len() requer texto, lista ou objeto".into()),
+                Value::Tensor(v) => Ok(Value::Number(v.data.len() as f64)),
+                _ => Err("Nano: len() requer texto, lista, objeto ou tensor".into()),
             };
+        }
+
+        if name == "tensor" {
+            if args.len() != 2 {
+                return Err("Nano: tensor() recebe dados e shape".into());
+            }
+            let data = list_numbers(&args[0], "dados")?;
+            let shape = list_shape(&args[1])?;
+            return Ok(Value::Tensor(super::Tensor::new(data, shape)?));
+        }
+
+        if name == "zeros" {
+            if args.len() != 1 {
+                return Err("Nano: zeros() recebe shape".into());
+            }
+            let shape = list_shape(&args[0])?;
+            let size = shape.iter().copied().product::<usize>();
+            return Ok(Value::Tensor(super::Tensor::new(vec![0.0; size], shape)?));
+        }
+
+        if name == "shape" {
+            if args.len() != 1 {
+                return Err("Nano: shape() recebe 1 tensor".into());
+            }
+            return match &args[0] {
+                Value::Tensor(t) => Ok(Value::List(
+                    t.shape.iter().map(|v| Value::Number(*v as f64)).collect()
+                )),
+                _ => Err("Nano: shape() requer Tensor".into()),
+            };
+        }
+
+        if name == "matmul" {
+            if args.len() != 2 {
+                return Err("Nano: matmul() recebe 2 tensores".into());
+            }
+            return matmul_values(&args[0], &args[1]);
         }
 
         let function = self.functions.get(name).cloned()
@@ -406,4 +444,55 @@ fn cmp(a: Value, b: Value, f: fn(f64, f64) -> bool) -> Result<Value, String> {
         (Value::Number(x), Value::Number(y)) => Ok(Value::Boolean(f(x, y))),
         _ => Err("Nano: comparação requer números".into()),
     }
+}
+
+
+fn list_numbers(value: &Value, label: &str) -> Result<Vec<f32>, String> {
+    match value {
+        Value::List(items) => items.iter().map(|item| match item {
+            Value::Number(v) => Ok(*v as f32),
+            _ => Err(format!("Nano: tensor() requer Number nos {label}")),
+        }).collect(),
+        _ => Err(format!("Nano: tensor() requer lista de {label}")),
+    }
+}
+
+fn list_shape(value: &Value) -> Result<Vec<usize>, String> {
+    match value {
+        Value::List(items) => items.iter().map(|item| match item {
+            Value::Number(v) if *v >= 0.0 && v.fract() == 0.0 => Ok(*v as usize),
+            _ => Err("Nano: shape deve ser uma lista de números inteiros".into()),
+        }).collect(),
+        _ => Err("Nano: shape deve ser uma lista".into()),
+    }
+}
+
+fn matmul_values(a: &Value, b: &Value) -> Result<Value, String> {
+    let (left, right) = match (a, b) {
+        (Value::Tensor(a), Value::Tensor(b)) => (a, b),
+        _ => return Err("Nano: matmul() requer Tensor, Tensor".into()),
+    };
+
+    if left.shape.len() != 2 || right.shape.len() != 2 {
+        return Err("Nano: matmul() nesta versão requer tensores 2D".into());
+    }
+
+    let (m, k) = (left.shape[0], left.shape[1]);
+    let (k2, n) = (right.shape[0], right.shape[1]);
+    if k != k2 {
+        return Err(format!("Nano: matmul() incompatível: {}x{} com {}x{}", m, k, k2, n));
+    }
+
+    let mut out = vec![0.0_f32; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0.0_f32;
+            for x in 0..k {
+                sum += left.data[i * k + x] * right.data[x * n + j];
+            }
+            out[i * n + j] = sum;
+        }
+    }
+
+    Ok(Value::Tensor(super::Tensor::new(out, vec![m, n])?))
 }
