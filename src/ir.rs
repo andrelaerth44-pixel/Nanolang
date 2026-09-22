@@ -295,6 +295,18 @@ pub(crate) struct IrRuntime {
 }
 
 impl IrRuntime {
+    fn sync_tensor_host(&self, tensor: &TensorRef) -> Result<(), String> {
+        let (id, elements, device, valid) = {
+            let t=tensor.borrow();
+            (t.id,t.data_len(),t.device,t.host_valid)
+        };
+        if device!=backend::BackendKind::Gpu || valid { return Ok(()); }
+        let data=self.backend.read_tensor(id,elements)
+            .map_err(|e|format!("Nano: readback {}: {}",self.backend.kind().name(),e))?;
+        tensor.borrow_mut().set_data_f32(data);
+        Ok(())
+    }
+
     pub(crate) fn new() -> Self {
         Self::with_backend_and_dtype(backend::BackendKind::Cpu, DType::F32)
             .expect("CPU backend must be available")
@@ -370,7 +382,7 @@ impl IrRuntime {
                 IrInst::Index => {
                     let index = stack.pop().ok_or_else(|| "Nano IR: stack vazia no índice".to_string())?;
                     let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no alvo".to_string())?;
-                    stack.push(index_value(target, index)?);
+                    stack.push(self.index_value(target, index)?);
                 }
                 IrInst::Field(name) => {
                     let target = stack.pop().ok_or_else(|| "Nano IR: stack vazia no campo".to_string())?;
@@ -445,6 +457,13 @@ impl IrRuntime {
         Ok(None)
     }
 
+    fn index_value(&self,target:Value,index:Value)->Result<Value,String>{
+        match target{
+            Value::Tensor(t)=>{self.sync_tensor_host(&t)?;index_value(Value::Tensor(t),index)}
+            other=>index_value(other,index),
+        }
+    }
+
     fn call(&mut self, name: &str, args: Vec<Value>) -> Result<Value, String> {
         if name == "len" {
             if args.len() != 1 {
@@ -485,6 +504,7 @@ impl IrRuntime {
                 Value::Text(value) => DType::parse(value)?,
                 _ => return Err("Nano: cast() requer dtype Text".into()),
             };
+            self.sync_tensor_host(&tensor)?;
             let source = tensor.borrow();
             let data = source.data_f32();
             let shape = source.shape.clone();
