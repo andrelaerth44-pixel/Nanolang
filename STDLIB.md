@@ -26,7 +26,7 @@ thread_spawn executa um comando externo em uma thread nativa e retorna um handle
 
 ## Rede
 
-net_tcp_connect, net_tcp_listen, net_tcp_accept, net_tcp_send, net_tcp_recv, net_tcp_close.
+net_http_get, net_tcp_connect, net_tcp_listen, net_tcp_accept, net_tcp_send, net_tcp_recv, net_tcp_close.
 
 A camada atual fornece TCP direto. HTTP de alto nível pode ser construído sobre essa API.
 
