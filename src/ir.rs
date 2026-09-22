@@ -270,7 +270,7 @@ pub(crate) struct IrRuntime {
     backend: Box<dyn TensorBackend>,
     loaded_modules: HashSet<PathBuf>,
     module_stack: Vec<PathBuf>,
-
+}
 
 impl IrRuntime {
     pub(crate) fn new() -> Self {
