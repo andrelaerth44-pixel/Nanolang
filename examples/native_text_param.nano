@@ -1,0 +1,12 @@
+function text_identity(value) {
+    return value
+}
+
+function text_and_number(label, value) {
+    print(label)
+    print(value)
+    return label
+}
+
+print(text_identity("native-param"))
+print(text_and_number("answer", 42))
