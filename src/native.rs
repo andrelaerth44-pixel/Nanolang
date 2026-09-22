@@ -15,6 +15,7 @@ enum Kind {
     Text,
     Function,
     Null,
+    Any,
 }
 
 pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
@@ -121,9 +122,14 @@ pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
     fs::write(&asm_path, &assembly)
         .map_err(|e| format!("Nano: não foi possível escrever '{}': {e}", asm_path.display()))?;
 
+    let runtime_path = output.with_extension("runtime.c");
+    fs::write(&runtime_path, include_str!("native_runtime.c"))
+        .map_err(|e| format!("Nano: não foi possível escrever '{}': {e}", runtime_path.display()))?;
+
     let cc = std::env::var("CC").unwrap_or_else(|_| "cc".into());
     let status = Command::new(&cc)
         .arg(&asm_path)
+        .arg(&runtime_path)
         .arg("-o")
         .arg(output)
         .arg("-lm")
@@ -136,6 +142,7 @@ pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
 
     if std::env::var_os("NANO_KEEP_ASM").is_none() {
         let _ = fs::remove_file(&asm_path);
+        let _ = fs::remove_file(&runtime_path);
     }
     Ok(())
 }
@@ -168,7 +175,7 @@ impl NativeModule {
         let (entry_states, max_stack, _local_kinds, _return_kind, _calls) =
             analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
 
-        let temp_slots = 2usize;
+        let temp_slots = 8usize;
         let frame = (((4096 + locals.len().max(1) * 8 + (max_stack + temp_slots) * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
             "\n    .text\n    .globl {symbol}\n{symbol}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq "
@@ -194,7 +201,7 @@ impl NativeModule {
                     ));
                     float_index += 1;
                 }
-                Kind::Text | Kind::Function | Kind::Null => {
+                Kind::Text | Kind::Function | Kind::Null | Kind::Any => {
                     self.text.push_str(&format!(
                         "    movq {}, {}(%rbp)\n",
                         int_regs[int_index],
@@ -261,7 +268,7 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match kind {
-                        Kind::Text | Kind::Function | Kind::Null => self.text.push_str(&format!(
+                        Kind::Text | Kind::Function | Kind::Null | Kind::Any => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
                             local_offset(index),
                             stack_offset(depth)
@@ -282,7 +289,7 @@ impl NativeModule {
                     let index = *locals.get(var).unwrap();
                     let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
                     match kind {
-                        Kind::Text | Kind::Function | Kind::Null => self.text.push_str(&format!(
+                        Kind::Text | Kind::Function | Kind::Null | Kind::Any => self.text.push_str(&format!(
                             "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
                             stack_offset(slot),
                             local_offset(index)
@@ -977,8 +984,9 @@ fn merge_kind(previous: Kind, next: Kind) -> Result<Kind, ()> {
     match (previous, next) {
         (Kind::Unknown, kind) => Ok(kind),
         (kind, Kind::Unknown) => Ok(kind),
+        (Kind::Any, _) | (_, Kind::Any) => Ok(Kind::Any),
         (a, b) if a == b => Ok(a),
-        _ => Err(()),
+        _ => Ok(Kind::Any),
     }
 }
 
