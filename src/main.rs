@@ -1410,6 +1410,9 @@ impl Semantic {
                     }
                     return Ok(Type::Number);
                 }
+                if name == "ui_clear" { if args.len() != 4 { return Err("Nano: ui.clear() recebe handle,r,g,b".into()); } return Ok(Type::Null); }
+                if name == "ui_rect" { if args.len() != 8 { return Err("Nano: ui.rect() recebe 8 argumentos".into()); } return Ok(Type::Null); }
+                if name == "ui_button" { if args.len() != 9 { return Err("Nano: ui.button() recebe 9 argumentos".into()); } return Ok(Type::Null); }
                 if name == "ui_set_title" {
                     if args.len() != 2 { return Err("Nano: ui_set_title() recebe handle e título".into()); }
                     if (self.expr_type(&args[0])? != Type::Number && self.expr_type(&args[0])? != Type::Any)
