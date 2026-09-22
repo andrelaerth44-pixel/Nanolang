@@ -80,8 +80,9 @@ function lex(path) {
         } else if is_digit(c) {
             start_index = i
             dot_seen = false
+            done = false
             i = i + 1
-            while i < n {
+            while i < n && !done {
                 c = char_at(source, i)
                 if is_digit(c) {
                     i = i + 1
@@ -89,12 +90,10 @@ function lex(path) {
                     dot_seen = true
                     i = i + 1
                 } else {
-                    i = n
+                    done = true
                 }
             }
-            if i == n || (i > start_index && (is_digit(char_at(source, i - 1)) || char_at(source, i - 1) == ".")) {
-                tokens = append(tokens, {kind: "number", text: substring(source, start_index, i)})
-            }
+            tokens = append(tokens, {kind: "number", text: substring(source, start_index, i)})
         } else if i + 1 < n && (
             (c == "=" && char_at(source, i + 1) == "=") ||
             (c == "!" && char_at(source, i + 1) == "=") ||
