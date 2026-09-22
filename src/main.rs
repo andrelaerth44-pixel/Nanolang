@@ -15,7 +15,7 @@ use half::{bf16, f16};
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Ident(String), Number(f64), Text(String),
-    True, False, Use, Function, Print, If, Else, Return, While, For, In,
+    True, False, Null, Use, Function, Print, If, Else, Return, While, For, In,
     Plus, Minus, Star, Slash, Percent, Equal, EqualEqual, BangEqual,
     And, Or, Bang,
     Greater, GreaterEqual, Less, LessEqual,
@@ -122,7 +122,7 @@ impl Lexer {
         let start = self.pos;
         while matches!(self.peek(), Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) { self.advance(); }
         match self.src[start..self.pos].iter().collect::<String>().as_str() {
-            "true" => Token::True, "false" => Token::False,
+            "true" => Token::True, "false" => Token::False, "null" => Token::Null,
             "use" => Token::Use, "function" => Token::Function,
             "print" => Token::Print, "if" => Token::If,
             "else" => Token::Else, "return" => Token::Return,
@@ -613,6 +613,7 @@ impl Parser {
             Token::Text(v) => Expr::Value(Value::Text(v)),
             Token::True => Expr::Value(Value::Boolean(true)),
             Token::False => Expr::Value(Value::Boolean(false)),
+            Token::Null => Expr::Value(Value::Null),
             Token::Ident(name) => Expr::Var(name),
             Token::LeftParen => {
                 let e = self.expression()?;
