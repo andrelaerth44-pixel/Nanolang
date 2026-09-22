@@ -340,7 +340,7 @@ function emit_program(program) {
     return lines
 }
 
-function main() {
+function compiler_main() {
     tokens = lex("main.nano")
     parsed = parse_program(tokens)
 
