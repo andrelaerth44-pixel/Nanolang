@@ -230,7 +230,10 @@ impl Tensor {
     ) -> Result<TensorRef, String> {
         let expected = shape.iter().copied().product::<usize>();
         if expected != data.len() {
-            return Err(format!("Nano: tensor tem {} valores, mas a forma exige {}", data.len(), expected));
+            return Err(format!(
+                "Nano: tensor() inconsistente: dados={} shape={:?} esperado={}",
+                data.len(), shape, expected
+            ));
         }
         Ok(Rc::new(RefCell::new(Self {
             id: next_tensor_id(),
