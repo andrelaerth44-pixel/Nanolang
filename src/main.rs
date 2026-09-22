@@ -1204,6 +1204,16 @@ impl Semantic {
                     }
                 };
 
+                // Direct user-defined functions shadow built-ins.
+                if !raw_name.starts_with("std.") {
+                    if let Some((expected, return_type)) = self.functions.get(&raw_name).copied() {
+                        if expected != args.len() {
+                            return Err(format!("Nano: '{raw_name}' esperava {expected} argumentos"));
+                        }
+                        return Ok(return_type);
+                    }
+                }
+
                 let name = match raw_name.as_str() {
                     "std.fs.read_text" => "fs_read_text",
                     "std.fs.write_text" => "fs_write_text",
