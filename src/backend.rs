@@ -59,6 +59,15 @@ pub(crate) trait TensorBackend {
         self.matmul(left, left_shape, right, right_shape)
     }
 
+    fn matmul_resident_async(
+        &self,
+        _left_id: u64, _left_shape: &[usize],
+        _right_id: u64, _right_shape: &[usize],
+        _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta execução residente assíncrona".into()))
+    }
+
     fn elementwise(
         &self,
         left: &[f32],
@@ -75,6 +84,15 @@ pub(crate) trait TensorBackend {
         _output_id: u64,
     ) -> Result<Vec<f32>, BackendError> {
         self.elementwise(left, right, shape, op)
+    }
+
+    fn elementwise_resident_async(
+        &self,
+        _left_id: u64, _right_id: u64,
+        _shape: &[usize], _op: ElementwiseOp,
+        _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta execução residente assíncrona".into()))
     }
 
     fn fused_mul_add(
@@ -95,10 +113,29 @@ pub(crate) trait TensorBackend {
         self.fused_mul_add(left, right, bias, shape)
     }
 
+    fn fused_mul_add_resident_async(
+        &self,
+        _left_id: u64, _right_id: u64, _bias_id: u64,
+        _shape: &[usize], _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta execução residente assíncrona".into()))
+    }
+
     fn reduce(&self, data: &[f32], mean: bool) -> Result<f32, BackendError>;
 
     fn sync_tensor(&self, _id: u64, _data: &[f32]) -> Result<(), BackendError> { Ok(()) }
     fn release_tensor(&self, _id: u64) -> Result<(), BackendError> { Ok(()) }
+
+    fn reduce_resident_async(
+        &self,
+        _input_id: u64, _elements: usize, _mean: bool, _output_id: u64,
+    ) -> Result<(), BackendError> {
+        Err(BackendError("backend não suporta redução residente assíncrona".into()))
+    }
+
+    fn read_tensor(&self, _id: u64, _elements: usize) -> Result<Vec<f32>, BackendError> {
+        Err(BackendError("backend não suporta readback explícito de tensor".into()))
+    }
 
     fn transfer(&self, data: &[f32]) -> Result<Vec<f32>, BackendError>;
 }
