@@ -252,6 +252,7 @@ fn completion(server: &Server, request: &Value) -> Value {
         ("for", 14, "laço for"),
         ("in", 14, "iterador"),
         ("return", 14, "retorna de uma função"),
+        ("break", 14, "sai do loop mais interno"),
         ("true", 21, "booleano verdadeiro"),
         ("false", 21, "booleano falso"),
         ("null", 21, "valor nulo"),
