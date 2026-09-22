@@ -27,3 +27,14 @@ function square(value) {
 task = task_spawn("square", [6])
 task_result = task_join(task)
 assert(task_result == 36, "task-concurrency")
+
+function double(value) {
+    return value * 2
+}
+
+function triple_double(value) {
+    return double(value) + value
+}
+
+task2 = task_spawn("triple_double", [5])
+assert(task_join(task2) == 15, "task-function-dependency")
