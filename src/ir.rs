@@ -56,6 +56,45 @@ struct IterState {
 }
 
 #[derive(Debug, Clone)]
+
+#[derive(Clone, Debug)]
+enum TaskValue {
+    Number(f64),
+    Text(String),
+    Boolean(bool),
+    List(Vec<TaskValue>),
+    Object(HashMap<String, TaskValue>),
+    Null,
+}
+
+impl TaskValue {
+    fn from_value(value: Value) -> Result<Self, String> {
+        match value {
+            Value::Number(v) => Ok(Self::Number(v)),
+            Value::Text(v) => Ok(Self::Text(v)),
+            Value::Boolean(v) => Ok(Self::Boolean(v)),
+            Value::Null => Ok(Self::Null),
+            Value::List(values) => values.into_iter().map(Self::from_value).collect::<Result<Vec<_>, _>>().map(Self::List),
+            Value::Object(values) => values.into_iter()
+                .map(|(key, value)| Self::from_value(value).map(|value| (key, value)))
+                .collect::<Result<HashMap<_, _>, _>>()
+                .map(Self::Object),
+            Value::Tensor(_) => Err("Nano: tarefa não pode devolver Tensor entre threads".into()),
+        }
+    }
+
+    fn into_value(self) -> Value {
+        match self {
+            Self::Number(v) => Value::Number(v),
+            Self::Text(v) => Value::Text(v),
+            Self::Boolean(v) => Value::Boolean(v),
+            Self::Null => Value::Null,
+            Self::List(values) => Value::List(values.into_iter().map(Self::into_value).collect()),
+            Self::Object(values) => Value::Object(values.into_iter().map(|(key, value)| (key, value.into_value())).collect()),
+        }
+    }
+}
+
 struct AdamState {
     step: u64,
     m: Vec<f32>,
@@ -354,7 +393,7 @@ pub(crate) struct IrRuntime {
     tcp_streams: HashMap<u64, TcpStream>,
     tcp_listeners: HashMap<u64, TcpListener>,
     children: HashMap<u64, Child>,
-    tasks: HashMap<u64, JoinHandle<Result<Value, String>>>,
+    tasks: HashMap<u64, JoinHandle<Result<TaskValue, String>>>,
     ui_windows: HashMap<u64, ui::UiHandle>,
     channels: HashMap<u64, (Sender<Value>, Receiver<Value>)>,
 }
@@ -695,7 +734,7 @@ impl IrRuntime {
                 Command::new(&command)
                     .args(argv)
                     .status()
-                    .map(|status| Value::Number(status.code().unwrap_or(-1) as f64))
+                    .map(|status| TaskValue::Number(status.code().unwrap_or(-1) as f64))
                     .map_err(|e| format!("Nano: thread_spawn('{command}'): {e}"))
             });
             self.tasks.insert(handle, join);
@@ -741,7 +780,7 @@ impl IrRuntime {
                     runtime.vars.insert(param.clone(), value);
                 }
                 runtime.execute_code(&function.code)
-                    .map(|value| value.unwrap_or(Value::Null))
+                    .and_then(|value| TaskValue::from_value(value.unwrap_or(Value::Null)))
             });
             self.tasks.insert(handle, join);
             return Ok(Value::Number(handle as f64));
@@ -752,8 +791,9 @@ impl IrRuntime {
             let handle = integer_arg(&args[0], "handle")?;
             let task = self.tasks.remove(&handle)
                 .ok_or_else(|| format!("Nano: tarefa {handle} não encontrada"))?;
-            task.join()
+            return task.join()
                 .map_err(|_| format!("Nano: {name}(): tarefa {handle} entrou em pânico"))?
+                .map(TaskValue::into_value);
         }
 
         if name == "process_wait" {
