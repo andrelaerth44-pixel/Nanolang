@@ -128,6 +128,7 @@ enum TensorOp {
     Leaf,
     Elementwise(TensorOpKind, TensorRef, TensorRef),
     Matmul(TensorRef, TensorRef),
+    FusedMulAdd(TensorRef, TensorRef, TensorRef),
     Sum(TensorRef),
     Mean(TensorRef),
 }
