@@ -11,7 +11,7 @@ use std::thread::{self, JoinHandle};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
-use super::{backend, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
+use super::{backend, qualified_name, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
 use backend::{ElementwiseOp, TensorBackend};
 
 #[derive(Debug, Clone)]
