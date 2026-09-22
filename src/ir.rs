@@ -6,7 +6,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH, Duration};
 
 use super::{backend, Expr, Lexer, Op, Parser, Semantic, Stmt, TensorOp, TensorOpKind, TensorRef, Value};
@@ -301,6 +301,7 @@ pub(crate) struct IrRuntime {
     tcp_streams: HashMap<u64, TcpStream>,
     tcp_listeners: HashMap<u64, TcpListener>,
     children: HashMap<u64, Child>,
+    tasks: HashMap<u64, JoinHandle<Result<i32, String>>>,
 }
 
 impl IrRuntime {
@@ -341,6 +342,7 @@ impl IrRuntime {
             tcp_streams: HashMap::new(),
             tcp_listeners: HashMap::new(),
             children: HashMap::new(),
+            tasks: HashMap::new(),
         })
     }
 
@@ -574,6 +576,33 @@ impl IrRuntime {
             let pid = child.id() as f64;
             self.children.insert(handle, child);
             return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "thread_spawn" {
+            if args.len() != 2 { return Err("Nano: thread_spawn() recebe comando e lista de argumentos".into()); }
+            let command = text_arg(&args[0], "comando")?;
+            let argv = text_list_arg(&args[1], "argumentos")?;
+            let handle = self.next_handle;
+            self.next_handle += 1;
+            let join = thread::spawn(move || {
+                Command::new(&command)
+                    .args(argv)
+                    .status()
+                    .map(|status| status.code().unwrap_or(-1))
+                    .map_err(|e| format!("Nano: thread_spawn('{command}'): {e}"))
+            });
+            self.tasks.insert(handle, join);
+            return Ok(Value::Number(handle as f64));
+        }
+
+        if name == "thread_join" {
+            if args.len() != 1 { return Err("Nano: thread_join() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let task = self.tasks.remove(&handle)
+                .ok_or_else(|| format!("Nano: tarefa {handle} não encontrada"))?;
+            let status = task.join()
+                .map_err(|_| format!("Nano: thread_join(): tarefa {handle} entrou em pânico"))??;
+            return Ok(Value::Number(status as f64));
         }
 
         if name == "process_wait" {
