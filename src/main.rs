@@ -8,6 +8,9 @@ mod memory;
 mod ir;
 mod native;
 mod npu;
+mod sync_runtime;
+mod crypto;
+mod http;
 
 use std::{cell::RefCell, env, fs, io::{self, BufRead, Write}, path::{Path, PathBuf}, process::{self, Stdio}, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
