@@ -6,6 +6,7 @@ use "selfhost/lexer.nano"
 use "selfhost/parser.nano"
 use "selfhost/semantic.nano"
 use "selfhost/compiler.nano"
+use "selfhost/c_backend.nano"
 
 function compile_file(path) {
     tokens = lex(path)
@@ -32,11 +33,27 @@ function main() {
     result = compile_file(input)
 
     if result.ok {
-        destination = std.env.get("NANO_SELFHOST_OUTPUT")
-        if destination != null {
-            std.fs.write_text(destination, result.ir)
+        c_destination = std.env.get("NANO_SELFHOST_C")
+        if c_destination != null {
+            runtime_path = std.env.get("NANO_SELFHOST_RUNTIME")
+            if runtime_path == null {
+                runtime_path = "src/native_runtime.c"
+            }
+            runtime_text = std.fs.read_text(runtime_path)
+            generated = emit_c(result.ir, runtime_text)
+            if generated.ok {
+                std.fs.write_text(c_destination, generated.c)
+                print "self-host C OK"
+            } else {
+                print "c_backend: " + generated.error
+            }
         } else {
-            print result.ir
+            destination = std.env.get("NANO_SELFHOST_OUTPUT")
+            if destination != null {
+                std.fs.write_text(destination, result.ir)
+            } else {
+                print result.ir
+            }
         }
     } else {
         print result.stage + ": " + result.error
