@@ -466,6 +466,54 @@ impl TensorBackend for GpuBackend {
         self.dispatch(&self.matmul,&[&a,&b],&params,(((n as u32)+7)/8,((m as u32)+7)/8,1),m*n)
     }
 
+    fn matmul_transposed(
+        &self,
+        left: &[f32],
+        left_shape: &[usize],
+        right: &[f32],
+        right_shape: &[usize],
+        left_transpose: bool,
+        right_transpose: bool,
+    ) -> Result<Vec<f32>, BackendError> {
+        if left_shape.len() != 2 || right_shape.len() != 2 {
+            return Err(BackendError("matmul transposto GPU requer tensores 2D".into()));
+        }
+        let (ar, ac) = (left_shape[0], left_shape[1]);
+        let (br, bc) = (right_shape[0], right_shape[1]);
+        let (m, k) = if left_transpose { (ac, ar) } else { (ar, ac) };
+        let (k2, n) = if right_transpose { (bc, br) } else { (br, bc) };
+        if k != k2 || left.len() != ar * ac || right.len() != br * bc {
+            return Err(BackendError("matmul transposto GPU recebeu shapes incompatíveis".into()));
+        }
+        let a_id = crate::next_tensor_id();
+        let b_id = crate::next_tensor_id();
+        let out_id = crate::next_tensor_id();
+        let a = self.ensure_resident(a_id, left)?;
+        let b = self.ensure_resident(b_id, right)?;
+        let out = self.resident_buffer(out_id, m * n)?;
+        let bytes = [
+            (m as u32).to_ne_bytes().as_slice(),
+            (k as u32).to_ne_bytes().as_slice(),
+            (n as u32).to_ne_bytes().as_slice(),
+            (if left_transpose { 1u32 } else { 0 }).to_ne_bytes().as_slice(),
+            (if right_transpose { 1u32 } else { 0 }).to_ne_bytes().as_slice(),
+            &[0;4], &[0;4], &[0;4],
+        ].concat();
+        let params = self.create_buffer(&bytes, wgpu::BufferUsages::UNIFORM);
+        let result = self.dispatch_into(
+            &self.transposed_matmul,
+            &[&a, &b],
+            &params,
+            (((n as u32) + 7) / 8, ((m as u32) + 7) / 8, 1),
+            &out,
+            m * n,
+        );
+        let _ = self.resident.borrow_mut().remove(&a_id);
+        let _ = self.resident.borrow_mut().remove(&b_id);
+        let _ = self.resident.borrow_mut().remove(&out_id);
+        result
+    }
+
     fn matmul_resident_async(&self,left_id:u64,left_shape:&[usize],right_id:u64,right_shape:&[usize],output_id:u64)->Result<(),BackendError>{
         if left_shape.len()!=2||right_shape.len()!=2{return Err(BackendError("matmul GPU requer tensores 2D".into()));}
         let(m,k)=(left_shape[0],left_shape[1]);let(k2,n)=(right_shape[0],right_shape[1]);
