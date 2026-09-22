@@ -12,6 +12,7 @@ enum Kind {
     Number,
     Boolean,
     Text,
+    Function,
 }
 
 pub(crate) fn build(ir: &IrProgram, output: &Path) -> Result<(), String> {
@@ -132,6 +133,13 @@ impl NativeModule {
                         stack_offset(depth)
                     ));
                 }
+                IrInst::Const(Value::Function(function)) => {
+                    self.text.push_str(&format!(
+                        "    leaq nano_fn_{}(%rip), %rax\n    movq %rax, {}(%rbp)\n",
+                        sanitize(function),
+                        stack_offset(depth)
+                    ));
+                }
                 IrInst::Const(Value::Text(value)) => {
                     let label = self.add_text(value);
                     self.text.push_str(&format!(
@@ -142,21 +150,37 @@ impl NativeModule {
                 IrInst::Load(var) => {
                     let index = *locals.get(var)
                         .ok_or_else(|| format!("Nano native: variável '{var}' não é conhecida em '{name}'"))?;
-                    self.text.push_str(&format!(
-                        "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
-                        local_offset(index),
-                        stack_offset(depth)
-                    ));
+                    let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
+                    match kind {
+                        Kind::Function => self.text.push_str(&format!(
+                            "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
+                            local_offset(index),
+                            stack_offset(depth)
+                        )),
+                        _ => self.text.push_str(&format!(
+                            "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
+                            local_offset(index),
+                            stack_offset(depth)
+                        )),
+                    }
                 }
                 IrInst::Store(var) => {
                     let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
                     let index = *locals.get(var).unwrap();
-                    self.text.push_str(&format!(
-                        "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
-                        stack_offset(slot),
-                        local_offset(index)
-                    ));
+                    let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
+                    match kind {
+                        Kind::Function => self.text.push_str(&format!(
+                            "    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
+                            stack_offset(slot),
+                            local_offset(index)
+                        )),
+                        _ => self.text.push_str(&format!(
+                            "    movsd {}(%rbp), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
+                            stack_offset(slot),
+                            local_offset(index)
+                        )),
+                    }
                 }
                 IrInst::Binary(op) => {
                     let right = depth.checked_sub(1)
@@ -259,6 +283,25 @@ impl NativeModule {
                         stack_offset(start)
                     ));
                 }
+                IrInst::CallValue(count) => {
+                    let function_slot = depth.checked_sub(*count + 1)
+                        .ok_or_else(|| format!("Nano native: chamada indireta sem alvo em '{name}'"))?;
+
+                    let args_start = function_slot + 1;
+                    for (arg, reg) in (args_start..depth).zip(0..8) {
+                        let kind = entry_states[ip].as_ref().unwrap()[arg];
+                        if !matches!(kind, Kind::Number | Kind::Boolean) {
+                            return Err(format!("Nano native: chamada indireta aceita apenas argumentos escalares em '{name}'"));
+                        }
+                        self.load_stack(arg, &format!("%xmm{reg}"));
+                    }
+
+                    self.text.push_str(&format!(
+                        "    movq {}(%rbp), %rax\n    call *%rax\n    movsd %xmm0, {}(%rbp)\n",
+                        stack_offset(function_slot),
+                        stack_offset(function_slot)
+                    ));
+                }
                 IrInst::Print => {
                     let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: print sem valor em '{name}'"))?;
@@ -277,6 +320,9 @@ impl NativeModule {
                                 "    movsd {}(%rbp), %xmm0\n    ucomisd {zero}(%rip), %xmm0\n    je {false_label}\n    leaq nano_true(%rip), %rdi\n    jmp {end_label}\n{false_label}:\n    leaq nano_false(%rip), %rdi\n{end_label}:\n    call puts@PLT\n",
                                 stack_offset(slot)
                             ));
+                        }
+                        Kind::Function => {
+                            self.text.push_str("    leaq nano_function(%rip), %rdi\n    call puts@PLT\n");
                         }
                         Kind::Text => {
                             self.text.push_str(&format!(
@@ -310,7 +356,14 @@ impl NativeModule {
                 IrInst::Return => {
                     let slot = depth.checked_sub(1)
                         .ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
-                    self.load_stack(slot, "%xmm0");
+                    let kind = entry_states[ip].as_ref().unwrap().last().copied().unwrap();
+                    match kind {
+                        Kind::Function => self.text.push_str(&format!(
+                            "    movq {}(%rbp), %rax\n",
+                            stack_offset(slot)
+                        )),
+                        _ => self.load_stack(slot, "%xmm0"),
+                    }
                     self.text.push_str("    movq %rbp, %rsp\n    popq %rbp\n    ret\n");
                 }
                 _ => unreachable!("unsupported instruction rejected in native stack analysis"),
@@ -348,6 +401,7 @@ impl NativeModule {
         text.push_str("nano_fmt:\n    .byte 37,103,10,0\n");
         text.push_str("nano_true:\n    .byte 116,114,117,101,0\n");
         text.push_str("nano_false:\n    .byte 102,97,108,115,101,0\n");
+        text.push_str("nano_function:\n    .byte 60,102,117,110,99,116,105,111,110,62,0\n");
         for (i, value) in self.float_constants.iter().enumerate() {
             text.push_str(&format!(".LCF{i}:\n    .double {value:.17e}\n"));
         }
@@ -422,6 +476,9 @@ fn analyze_stack(
             IrInst::Const(Value::Boolean(_)) => {
                 next.push(Kind::Boolean);
             }
+            IrInst::Const(Value::Function(_)) => {
+                next.push(Kind::Function);
+            }
             IrInst::Const(Value::Text(_)) => {
                 next.push(Kind::Text);
             }
@@ -437,7 +494,7 @@ fn analyze_stack(
             }
             IrInst::Store(var) => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: Store sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Number | Kind::Boolean) {
+                if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function) {
                     return Err(format!("Nano native: variável '{var}' precisa ser Number ou Boolean"));
                 }
                 match local_kinds.get(var).copied() {
@@ -535,8 +592,8 @@ fn analyze_stack(
             IrInst::Jump(_) => {}
             IrInst::Return => {
                 let value = next.pop().ok_or_else(|| format!("Nano native: retorno sem valor em '{name}'"))?;
-                if !matches!(value, Kind::Number | Kind::Boolean) {
-                    return Err(format!("Nano native: retorno de '{name}' deve ser Number ou Boolean"));
+                if !matches!(value, Kind::Number | Kind::Boolean | Kind::Function) {
+                    return Err(format!("Nano native: retorno de '{name}' deve ser Number, Boolean ou Function"));
                 }
                 match return_kind {
                     None => return_kind = Some(value),
