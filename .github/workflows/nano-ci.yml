@@ -80,6 +80,13 @@ jobs:
           printf 'native-param\nanswer\n42\nanswer\n' > /tmp/nano-native-text-param.expected
           diff -u /tmp/nano-native-text-param.expected /tmp/nano-native-text-param.out
 
+      - name: Native text operators
+        run: |
+          cargo run --quiet --bin nano -- build --native examples/native_text_ops.nano -o /tmp/nano-native-text-ops
+          /tmp/nano-native-text-ops > /tmp/nano-native-text-ops.out
+          printf 'nano-lang\ntrue\ntrue\n' > /tmp/nano-native-text-ops.expected
+          diff -u /tmp/nano-native-text-ops.expected /tmp/nano-native-text-ops.out
+
       - name: Native first-class function values
         run: |
           cargo run --quiet --bin nano -- build --native examples/function_values.nano -o /tmp/nano-function-values
