@@ -28,7 +28,12 @@ function main() {
     result = compile_file("examples/main.nano")
 
     if result.ok {
-        print result.ir
+        destination = std.env.get("NANO_SELFHOST_OUTPUT")
+        if destination != null {
+            std.fs.write_text(destination, result.ir)
+        } else {
+            print result.ir
+        }
     } else {
         print result.stage + ": " + result.error
     }
