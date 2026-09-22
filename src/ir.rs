@@ -1295,6 +1295,16 @@ impl IrRuntime {
             return Ok(Value::Null);
         }
 
+        if name == "ui_wait_event" {
+            if args.len() != 1 { return Err("Nano: ui_wait_event() recebe handle".into()); }
+            let handle = integer_arg(&args[0], "handle")?;
+            let window = self.ui_windows.get(&handle)
+                .ok_or_else(|| format!("Nano: janela {handle} não encontrada"))?;
+            return window.events.recv()
+                .map(Value::Text)
+                .map_err(|_| "Nano: thread da UI não está disponível".to_string());
+        }
+
         if name == "ui_poll_event" {
             if args.len() != 1 { return Err("Nano: ui_poll_event() recebe handle".into()); }
             let handle = integer_arg(&args[0], "handle")?;
