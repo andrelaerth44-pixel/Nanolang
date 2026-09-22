@@ -1,0 +1,5 @@
+# NPU provider ABI integration example.
+a = tensor([1, 2, 3, 4], [2, 2])
+b = tensor([5, 6, 7, 8], [2, 2])
+c = matmul(a, b)
+print shape(c)
