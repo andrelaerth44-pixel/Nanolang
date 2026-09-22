@@ -70,6 +70,13 @@ jobs:
           printf 'native-text\nnative-return\n' > /tmp/nano-native-text.expected
           diff -u /tmp/nano-native-text.expected /tmp/nano-native-text.out
 
+      - name: Native text parameters
+        run: |
+          cargo run --quiet --bin nano -- build --native examples/native_text_param.nano -o /tmp/nano-native-text-param
+          /tmp/nano-native-text-param > /tmp/nano-native-text-param.out
+          printf 'native-param\nanswer\n42\nanswer\n' > /tmp/nano-native-text-param.expected
+          diff -u /tmp/nano-native-text-param.expected /tmp/nano-native-text-param.out
+
       - name: Native first-class function values
         run: |
           cargo run --quiet --bin nano -- build --native examples/function_values.nano -o /tmp/nano-function-values
