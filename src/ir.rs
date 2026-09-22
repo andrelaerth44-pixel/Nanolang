@@ -2539,6 +2539,91 @@ fn gpu_gradient_accumulate(
     Ok(())
 }
 
+fn backward_gpu_matmul_transposed(
+    node: &TensorRef,
+    upstream: TensorRef,
+    left: TensorRef,
+    right: TensorRef,
+    left_transpose: bool,
+    right_transpose: bool,
+    grads: &mut HashMap<u64, TensorRef>,
+    backend: &dyn TensorBackend,
+) -> Result<(), String> {
+    let out_shape = node.borrow().shape.clone();
+    let left_shape = left.borrow().shape.clone();
+    let right_shape = right.borrow().shape.clone();
+
+    let left_grad_id = super::next_tensor_id();
+    if left_transpose {
+        backend.matmul_transposed_resident_async(
+            right.borrow().id,
+            &right_shape,
+            upstream.borrow().id,
+            &out_shape,
+            right_transpose,
+            true,
+            left_grad_id,
+            &left_shape,
+        )?;
+    } else {
+        backend.matmul_transposed_resident_async(
+            upstream.borrow().id,
+            &out_shape,
+            right.borrow().id,
+            &right_shape,
+            false,
+            !right_transpose,
+            left_grad_id,
+            &left_shape,
+        )?;
+    }
+    let left_grad = super::Tensor::remote_with_id(
+        left_grad_id,
+        left_shape.clone(),
+        false,
+        backend.kind(),
+        left.borrow().dtype,
+        TensorOp::Leaf,
+    )?;
+
+    let right_grad_id = super::next_tensor_id();
+    if right_transpose {
+        backend.matmul_transposed_resident_async(
+            upstream.borrow().id,
+            &out_shape,
+            left.borrow().id,
+            &left_shape,
+            true,
+            left_transpose,
+            right_grad_id,
+            &right_shape,
+        )?;
+    } else {
+        backend.matmul_transposed_resident_async(
+            left.borrow().id,
+            &left_shape,
+            upstream.borrow().id,
+            &out_shape,
+            !left_transpose,
+            false,
+            right_grad_id,
+            &right_shape,
+        )?;
+    }
+    let right_grad = super::Tensor::remote_with_id(
+        right_grad_id,
+        right_shape.clone(),
+        false,
+        backend.kind(),
+        right.borrow().dtype,
+        TensorOp::Leaf,
+    )?;
+
+    backward_gpu(&left, left_grad, grads, backend)?;
+    backward_gpu(&right, right_grad, grads, backend)?;
+    Ok(())
+}
+
 fn backward_gpu(
     node: &TensorRef,
     upstream: TensorRef,
@@ -2652,6 +2737,18 @@ fn backward_gpu(
             let rg=super::Tensor::remote_with_id(rid,right_shape.clone(),false,backend.kind(),right.borrow().dtype,TensorOp::Leaf)?;
             backward_gpu(&left,lg,grads,backend)?;
             backward_gpu(&right,rg,grads,backend)
+        }
+        TensorOp::MatmulTransposed(left,right,left_transpose,right_transpose) => {
+            backward_gpu_matmul_transposed(
+                node,
+                upstream,
+                left,
+                right,
+                left_transpose,
+                right_transpose,
+                grads,
+                backend,
+            )
         }
     }
 }
