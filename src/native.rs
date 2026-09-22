@@ -81,6 +81,7 @@ impl NativeModule {
         for inst in code {
             match inst {
                 IrInst::Const(Value::Number(_)) => stack.push(Kind::Number),
+                IrInst::Const(Value::Boolean(_)) => stack.push(Kind::Number),
                 IrInst::Const(Value::Text(_)) => stack.push(Kind::Text),
                 IrInst::Const(_) => {
                     return Err(format!("Nano native: constante não suportada em '{name}'"));
@@ -186,6 +187,15 @@ impl NativeModule {
             match inst {
                 IrInst::Const(Value::Number(value)) => {
                     let label = self.add_float(*value);
+                    let slot = compile_stack.len();
+                    self.text.push_str(&format!(
+                        "    movsd {label}(%rip), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
+                        stack_offset(slot)
+                    ));
+                    compile_stack.push(Kind::Number);
+                }
+                IrInst::Const(Value::Boolean(value)) => {
+                    let label = self.add_float(if *value { 1.0 } else { 0.0 });
                     let slot = compile_stack.len();
                     self.text.push_str(&format!(
                         "    movsd {label}(%rip), %xmm0\n    movsd %xmm0, {}(%rbp)\n",
