@@ -33,9 +33,9 @@ CUDA-capable GPU e outros aceleradores
 ## Etapas
 
 1. Tensor nativo em CPU.
-2. Operações vetorizadas e kernels.
-3. Tipos de precisão e armazenamento compacto.
-4. Autograd.
+2. Grafo de operações e autograd inicial.
+3. Operações vetorizadas e kernels.
+4. Tipos de precisão e armazenamento compacto.
 5. Otimizadores.
 6. Data loader e datasets grandes.
 7. Execução GPU.
