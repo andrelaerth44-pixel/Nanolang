@@ -581,6 +581,24 @@ fn code_actions(server: &Server, request: &Value) -> Value {
     let diagnostics = analyze(&text);
     let mut actions = Vec::new();
 
+    if let Some(diagnostic) = diagnostics.iter().find(|d| d.message.contains("não fecha o bloco esperado")) {
+        actions.push(json!({
+            "title": "Remover delimitador incorreto",
+            "kind": "quickfix",
+            "edit": {
+                "changes": {
+                    document_uri(request): [{
+                        "range": {
+                            "start": { "line": diagnostic.line, "character": diagnostic.character },
+                            "end": { "line": diagnostic.end_line, "character": diagnostic.end_character }
+                        },
+                        "newText": ""
+                    }]
+                }
+            }
+        }));
+    }
+
     if diagnostics.iter().any(|d| d.message.contains("bloco não terminado")) {
         let (line, character) = end_position(&text);
         actions.push(json!({
