@@ -1029,7 +1029,7 @@ enum CliCommand {
 fn parse_cli(
     args: &[String],
 ) -> Result<(CliCommand, String, Option<backend::BackendKind>, Option<DType>, Option<String>), String> {
-    let mut command = match args.get(1).map(String::as_str) {
+    let command = match args.get(1).map(String::as_str) {
         Some("run") => CliCommand::Run,
         Some("check") => CliCommand::Check,
         Some("build") => CliCommand::BuildNative,
