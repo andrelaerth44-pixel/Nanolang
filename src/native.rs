@@ -167,7 +167,8 @@ impl NativeModule {
         let (entry_states, max_stack, _local_kinds, _return_kind, _calls) =
             analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
 
-        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
+        let temp_slots = 2usize;
+        let frame = (((4096 + locals.len().max(1) * 8 + (max_stack + temp_slots) * 8) + 15) / 16) * 16;
         self.text.push_str(&format!(
             "\n    .text\n    .globl {symbol}\n{symbol}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq "
         ));
@@ -296,15 +297,17 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: binary sem operando esquerdo em '{name}'"))?;
                     let left_kind = entry_states[ip].as_ref().unwrap()[left];
                     let right_kind = entry_states[ip].as_ref().unwrap()[right];
+                    let temp_left = stack_offset(max_stack);
+                    let temp_result = stack_offset(max_stack + 1);
 
                     if *op == Op::Add && left_kind == Kind::Text && right_kind == Kind::Text {
                         self.text.push_str(&format!(
                             "    movq {}(%rbp), %rdi\n    call strlen@PLT\n    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    call strlen@PLT\n    addq {}(%rbp), %rax\n    addq $1, %rax\n    movq %rax, %rdi\n    call malloc@PLT\n    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcpy@PLT\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcat@PLT\n    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
                             stack_offset(left),
-                            temp_offset(250),
+                            temp_left,
                             stack_offset(right),
                             temp_offset(250),
-                            temp_offset(251),
+                            temp_result,
                             temp_offset(251),
                             stack_offset(left),
                             temp_offset(251),
@@ -905,6 +908,3 @@ fn stack_offset(slot: usize) -> isize {
     -2048 - (slot as isize * 8)
 }
 
-fn temp_offset(slot: usize) -> isize {
-    -2048 - (slot as isize * 8)
-}
