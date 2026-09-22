@@ -3,8 +3,9 @@ mod dtype;
 mod gpu;
 mod memory;
 mod ir;
+mod native;
 
-use std::{cell::RefCell, env, fs, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
+use std::{cell::RefCell, env, fs, path::Path, process, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
 use dtype::DType;
 use half::{bf16, f16};
@@ -1022,22 +1023,40 @@ fn cmp(a: Value, b: Value, f: fn(f64,f64)->bool) -> Result<Value,String> {
 enum CliCommand {
     Run,
     Check,
+    BuildNative,
 }
 
-fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::BackendKind>, Option<DType>), String> {
-    let command = match args.get(1).map(String::as_str) {
+fn parse_cli(
+    args: &[String],
+) -> Result<(CliCommand, String, Option<backend::BackendKind>, Option<DType>, Option<String>), String> {
+    let mut command = match args.get(1).map(String::as_str) {
         Some("run") => CliCommand::Run,
         Some("check") => CliCommand::Check,
-        _ => return Err("uso: nano run|check [--backend cpu|gpu] [--dtype f32|f16|bf16] [arquivo.nano]".into()),
+        Some("build") => CliCommand::BuildNative,
+        _ => return Err("uso: nano run|check|build --native [--output arquivo] [--backend cpu|gpu] [--dtype f32|f16|bf16] [arquivo.nano]".into()),
     };
 
     let mut path = None;
     let mut selected_backend = None;
     let mut selected_dtype = None;
+    let mut output = None;
+    let mut native_requested = false;
     let mut index = 2;
 
     while index < args.len() {
         match args[index].as_str() {
+            "--native" => native_requested = true,
+            "-o" | "--output" => {
+                index += 1;
+                output = Some(
+                    args.get(index)
+                        .ok_or_else(|| "Nano: --output requer um caminho".to_string())?
+                        .clone()
+                );
+            }
+            value if value.starts_with("--output=") => {
+                output = Some(value.trim_start_matches("--output=").to_string());
+            }
             "--backend" => {
                 index += 1;
                 let value = args.get(index)
@@ -1073,12 +1092,34 @@ fn parse_cli(args: &[String]) -> Result<(CliCommand, String, Option<backend::Bac
         index += 1;
     }
 
-    Ok((command, path.unwrap_or_else(|| "main.nano".into()), selected_backend, selected_dtype))
+    if matches!(command, CliCommand::BuildNative) && !native_requested {
+        return Err("Nano: use 'nano build --native [arquivo.nano]' para o backend CPU nativo".into());
+    }
+    if !matches!(command, CliCommand::BuildNative) && native_requested {
+        return Err("Nano: --native só é válido com 'build'".into());
+    }
+
+    if matches!(command, CliCommand::BuildNative) && output.is_none() {
+        let source_path = path.as_deref().unwrap_or("main.nano");
+        let stem = Path::new(source_path)
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .unwrap_or("nano_app");
+        output = Some(stem.to_string());
+    }
+
+    Ok((
+        command,
+        path.unwrap_or_else(|| "main.nano".into()),
+        selected_backend,
+        selected_dtype,
+        output,
+    ))
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let (command, path, cli_backend, cli_dtype) = match parse_cli(&args) {
+    let (command, path, cli_backend, cli_dtype, output) = match parse_cli(&args) {
         Ok(value) => value,
         Err(e) => {
             eprintln!("Nano 0.9 — {e}");
@@ -1117,6 +1158,18 @@ fn main() {
     let ir_program = optimizer.optimize_program(ir_program);
 
     if command == CliCommand::Check {
+        return;
+    }
+
+    if command == CliCommand::BuildNative {
+        let output_path = output
+            .expect("build --native sempre define caminho de saída");
+        let output = Path::new(&output_path);
+        if let Err(e) = native::build(&ir_program, output) {
+            eprintln!("{e}");
+            process::exit(1);
+        }
+        println!("Nano: executável nativo criado em '{}'", output.display());
         return;
     }
 
@@ -1167,11 +1220,12 @@ mod tests {
     #[test]
     fn cli_defaults_to_run_and_main() {
         let args = vec!["nano".into(), "run".into()];
-        let (command, path, backend, dtype) = parse_cli(&args).unwrap();
+        let (command, path, backend, dtype, output) = parse_cli(&args).unwrap();
         assert_eq!(command, CliCommand::Run);
         assert_eq!(path, "main.nano");
         assert_eq!(backend, None);
         assert_eq!(dtype, None);
+        assert_eq!(output, None);
     }
 
     #[test]
@@ -1182,11 +1236,12 @@ mod tests {
             "--backend=cpu".into(),
             "examples/tensor.nano".into(),
         ];
-        let (command, path, backend, dtype) = parse_cli(&args).unwrap();
+        let (command, path, backend, dtype, output) = parse_cli(&args).unwrap();
         assert_eq!(command, CliCommand::Check);
         assert_eq!(path, "examples/tensor.nano");
         assert_eq!(backend, Some(backend::BackendKind::Cpu));
         assert_eq!(dtype, None);
+        assert_eq!(output, None);
     }
 
     #[test]
@@ -1194,4 +1249,22 @@ mod tests {
         let args = vec!["nano".into(), "run".into(), "--wat".into()];
         assert!(parse_cli(&args).is_err());
     }
+
+    #[test]
+    fn cli_supports_native_build() {
+        let args = vec![
+            "nano".into(),
+            "build".into(),
+            "--native".into(),
+            "--output=app".into(),
+            "program.nano".into(),
+        ];
+        let (command, path, backend, dtype, output) = parse_cli(&args).unwrap();
+        assert_eq!(command, CliCommand::BuildNative);
+        assert_eq!(path, "program.nano");
+        assert_eq!(backend, None);
+        assert_eq!(dtype, None);
+        assert_eq!(output, Some("app".into()));
+    }
+
 }
