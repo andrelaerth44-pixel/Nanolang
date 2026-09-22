@@ -167,7 +167,7 @@ impl NativeModule {
         let (entry_states, max_stack, _local_kinds, _return_kind, _calls) =
             analyze_stack(code, name, &locals, params, param_kinds, function_returns)?;
 
-        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16;
+        let frame = (((4096 + locals.len().max(1) * 8 + max_stack * 8) + 15) / 16) * 16 + 8;
         self.text.push_str(&format!(
             "\n    .text\n    .globl {symbol}\n{symbol}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq "
         ));
@@ -294,8 +294,41 @@ impl NativeModule {
                         .ok_or_else(|| format!("Nano native: binary sem operando direito em '{name}'"))?;
                     let left = depth.checked_sub(2)
                         .ok_or_else(|| format!("Nano native: binary sem operando esquerdo em '{name}'"))?;
-                    self.load_stack(right, "%xmm1");
-                    self.load_stack(left, "%xmm0");
+                    let left_kind = entry_states[ip].as_ref().unwrap()[left];
+                    let right_kind = entry_states[ip].as_ref().unwrap()[right];
+
+                    if *op == Op::Add && left_kind == Kind::Text && right_kind == Kind::Text {
+                        self.text.push_str(&format!(
+                            "    movq {}(%rbp), %rdi\n    call strlen@PLT\n    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    call strlen@PLT\n    addq {}(%rbp), %rax\n    addq $1, %rax\n    movq %rax, %rdi\n    call malloc@PLT\n    movq %rax, {}(%rbp)\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcpy@PLT\n    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcat@PLT\n    movq {}(%rbp), %rax\n    movq %rax, {}(%rbp)\n",
+                            stack_offset(left),
+                            temp_offset(250),
+                            stack_offset(right),
+                            temp_offset(250),
+                            temp_offset(251),
+                            temp_offset(251),
+                            stack_offset(left),
+                            temp_offset(251),
+                            stack_offset(right),
+                            temp_offset(251),
+                            stack_offset(left)
+                        ));
+                    } else if matches!(*op, Op::Eq | Op::Ne)
+                        && left_kind == Kind::Text
+                        && right_kind == Kind::Text
+                    {
+                        self.text.push_str(&format!(
+                            "    movq {}(%rbp), %rdi\n    movq {}(%rbp), %rsi\n    call strcmp@PLT\n    xorl %eax, %eax\n",
+                            stack_offset(left),
+                            stack_offset(right)
+                        ));
+                        let set = if *op == Op::Eq { "sete" } else { "setne" };
+                        self.text.push_str(&format!(
+                            "    {set} %al\n    movzbl %al, %eax\n    cvtsi2sd %eax, %xmm0\n    movsd %xmm0, {}(%rbp)\n",
+                            stack_offset(left)
+                        ));
+                    } else {
+                        self.load_stack(right, "%xmm1");
+                        self.load_stack(left, "%xmm0");
 
                     match op {
                         Op::Add => self.text.push_str("    addsd %xmm1, %xmm0\n"),
@@ -337,10 +370,11 @@ impl NativeModule {
                         }
                     }
 
-                    self.text.push_str(&format!(
-                        "    movsd %xmm0, {}(%rbp)\n",
-                        stack_offset(left)
-                    ));
+                        self.text.push_str(&format!(
+                            "    movsd %xmm0, {}(%rbp)\n",
+                            stack_offset(left)
+                        ));
+                    }
                 }
                 IrInst::Unary(op) => {
                     let slot = depth.checked_sub(1)
@@ -668,7 +702,7 @@ fn analyze_stack(
                     Op::Eq | Op::Ne => {
                         if left == Kind::Unknown || right == Kind::Unknown {
                             next.push(Kind::Boolean);
-                        } else if left != right || !matches!(left, Kind::Number | Kind::Boolean) {
+                        } else if left != right || !matches!(left, Kind::Number | Kind::Boolean | Kind::Text) {
                             return Err(format!("Nano native: comparação {:?} exige valores compatíveis", op));
                         } else {
                             next.push(Kind::Boolean);
@@ -689,11 +723,23 @@ fn analyze_stack(
                         next.push(Kind::Boolean);
                     }
                     _ => {
-                        if (left != Kind::Unknown && left != Kind::Number)
-                            || (right != Kind::Unknown && right != Kind::Number) {
-                            return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                        if *op == Op::Add {
+                            if left == Kind::Text && right == Kind::Text {
+                                next.push(Kind::Text);
+                            } else if left == Kind::Unknown || right == Kind::Unknown {
+                                next.push(Kind::Unknown);
+                            } else if left == Kind::Number && right == Kind::Number {
+                                next.push(Kind::Number);
+                            } else {
+                                return Err(format!("Nano native: '+' exige Number + Number ou Text + Text"));
+                            }
+                        } else {
+                            if (left != Kind::Unknown && left != Kind::Number)
+                                || (right != Kind::Unknown && right != Kind::Number) {
+                                return Err(format!("Nano native: operação {:?} exige Numbers", op));
+                            }
+                            next.push(Kind::Number);
                         }
-                        next.push(Kind::Number);
                     }
                 }
             }
@@ -856,5 +902,9 @@ fn local_offset(index: usize) -> isize {
 }
 
 fn stack_offset(slot: usize) -> isize {
+    -2048 - (slot as isize * 8)
+}
+
+fn temp_offset(slot: usize) -> isize {
     -2048 - (slot as isize * 8)
 }
