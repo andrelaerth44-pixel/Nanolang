@@ -3294,8 +3294,8 @@ fn backward(
 #[cfg(test)]
 mod ir_tests {
     use std::collections::HashMap;
-    use super::{backward, index_value, IrRuntime, TensorOp, Value};
-    use crate::{backend::BackendKind, Tensor};
+    use super::{backward, index_value, Compiler, IrInst, IrRuntime, TensorOp, Value};
+    use crate::{backend::BackendKind, Lexer, Parser, Tensor};
 
     #[test]
     fn tensor_index_reads_flattened_storage() {
