@@ -912,7 +912,9 @@ impl Semantic {
                 Value::Tensor(_) => Type::Tensor,
                 Value::Null => Type::Null,
             }),
-            Expr::Var(name) => self.vars.get(name).copied().ok_or_else(|| format!("Nano: variável '{name}' não definida")),
+            Expr::Var(name) => self.vars.get(name).copied().or_else(|| {
+                self.functions.get(name).map(|_| Type::Function)
+            }).ok_or_else(|| format!("Nano: variável '{name}' não definida")),
             Expr::List(items) => {
                 for item in items { self.expr_type(item)?; }
                 Ok(Type::List)
