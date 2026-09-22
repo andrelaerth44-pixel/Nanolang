@@ -973,8 +973,24 @@ impl IrRuntime {
             "std.async.all" => "async_all",
             "std.async.sleep_ms" => "async_sleep_ms",
             "std.async.yield" => "thread_yield",
+            "std.backend.info" => "backend_info",
             other => other,
         };
+
+        if name == "backend_info" {
+            if !args.is_empty() { return Err("Nano: backend.info() não recebe argumentos".into()); }
+            let caps = self.backend.capabilities();
+            let mut info = HashMap::new();
+            info.insert("backend".into(), Value::Text(self.backend.kind().name().into()));
+            info.insert("matmul".into(), Value::Boolean(caps.matmul));
+            info.insert("matmul_transposed".into(), Value::Boolean(caps.matmul_transposed));
+            info.insert("elementwise".into(), Value::Boolean(caps.elementwise));
+            info.insert("fused_mul_add".into(), Value::Boolean(caps.fused_mul_add));
+            info.insert("reduce".into(), Value::Boolean(caps.reduce));
+            info.insert("resident_async".into(), Value::Boolean(caps.resident_async));
+            info.insert("readback".into(), Value::Boolean(caps.readback));
+            return Ok(Value::Object(info));
+        }
 
         if name == "fs_read_text" {
             if args.len() != 1 { return Err("Nano: fs_read_text() recebe caminho".into()); }
