@@ -6,7 +6,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
     Ident(String), Number(f64), Text(String),
-    True, False, Use, Function, Print, If, Else, Return,
+    True, False, Use, Function, Print, If, Else, Return, While, For, In,
     Plus, Minus, Star, Slash, Equal, EqualEqual, BangEqual,
     Greater, GreaterEqual, Less, LessEqual,
     LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Comma, Colon, Dot, Eof,
@@ -104,6 +104,7 @@ impl Lexer {
             "use" => Token::Use, "function" => Token::Function,
             "print" => Token::Print, "if" => Token::If,
             "else" => Token::Else, "return" => Token::Return,
+            "while" => Token::While, "for" => Token::For, "in" => Token::In,
             s => Token::Ident(s.to_string()),
         }
     }
@@ -251,6 +252,8 @@ enum Op { Add, Sub, Mul, Div, Eq, Ne, Gt, Ge, Lt, Le }
 enum Stmt {
     Assign(String, Expr), Print(Expr), Expr(Expr),
     If(Expr, Vec<Stmt>, Vec<Stmt>),
+    While(Expr, Vec<Stmt>),
+    For(String, Expr, Vec<Stmt>),
     Use(String), Function(String, Vec<String>, Vec<Stmt>),
     Return(Expr),
 }
@@ -286,6 +289,8 @@ impl Parser {
             Token::Function => self.function(),
             Token::Print => { self.advance(); Ok(Stmt::Print(self.expression()?)) }
             Token::If => self.if_stmt(),
+            Token::While => self.while_stmt(),
+            Token::For => self.for_stmt(),
             Token::Return => { self.advance(); Ok(Stmt::Return(self.expression()?)) }
             Token::Ident(name) => {
                 let name = name.clone();
@@ -333,6 +338,23 @@ impl Parser {
         };
         Ok(Stmt::If(cond, yes, no))
     }
+    fn while_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance();
+        let cond = self.expression()?;
+        Ok(Stmt::While(cond, self.block()?))
+    }
+
+    fn for_stmt(&mut self) -> Result<Stmt, String> {
+        self.advance();
+        let name = match self.advance() {
+            Token::Ident(v) => v,
+            x => return Err(format!("Nano: variável do for esperada, encontrado {:?}", x)),
+        };
+        self.expect(Token::In)?;
+        let iterable = self.expression()?;
+        Ok(Stmt::For(name, iterable, self.block()?))
+    }
+
     fn block(&mut self) -> Result<Vec<Stmt>, String> {
         self.expect(Token::LeftBrace)?;
         let mut out = Vec::new();
@@ -684,6 +706,14 @@ impl Semantic {
                     }
                     return Ok(Type::List);
                 }
+                if name == "range" {
+                    if args.len() != 1 { return Err("Nano: range() recebe 1 argumento".into()); }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Number && ty != Type::Any {
+                        return Err(format!("Nano: range() requer Number, recebido {}", ty.name()));
+                    }
+                    return Ok(Type::List);
+                }
                 if name == "parameter" {
                     if args.len() != 2 { return Err("Nano: parameter() recebe dados e shape".into()); }
                     let data_type = self.expr_type(&args[0])?;
@@ -785,7 +815,7 @@ fn main() {
         [_, command] if command == "run" => "main.nano".to_string(),
         [_, command, file] if command == "run" => file.clone(),
         _ => {
-            eprintln!("Nano 0.6 — uso: nano run [arquivo.nano]");
+            eprintln!("Nano 0.7 — uso: nano run [arquivo.nano]");
             process::exit(2);
         }
     };
