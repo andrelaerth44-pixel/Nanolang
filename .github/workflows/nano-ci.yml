@@ -47,15 +47,15 @@ jobs:
 
       - name: Native CPU end to end
         run: |
-          cargo run --quiet -- build --native examples/native.nano -o /tmp/nano-native
+          cargo run --quiet --bin nano -- build --native examples/native.nano -o /tmp/nano-native
           /tmp/nano-native > /tmp/nano-native.out
           printf '5\n6\n2\ntrue\n1\n' > /tmp/nano-native.expected
           diff -u /tmp/nano-native.expected /tmp/nano-native.out
 
       - name: Language and self-host checks
         run: |
-          cargo run --quiet -- check selfhost/lexer.nano
+          cargo run --quiet --bin nano -- check selfhost/lexer.nano
           cargo run --quiet -- check selfhost/parser.nano
           cargo run --quiet -- check selfhost/compiler.nano
           cargo run --quiet -- check examples/ui.nano
-          cargo run --quiet -- test tests
+          cargo run --quiet --bin nano -- test tests
