@@ -11,6 +11,7 @@ mod npu;
 mod sync_runtime;
 mod crypto;
 mod http;
+mod selfhost_native;
 
 use std::{cell::RefCell, env, fs, io::{self, BufRead, Write}, path::{Path, PathBuf}, process::{self, Stdio}, rc::Rc, sync::atomic::{AtomicU64, Ordering}};
 use std::collections::HashMap;
