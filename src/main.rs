@@ -774,7 +774,7 @@ impl Semantic {
                 for s in no { self.check_stmt_with_return(s, return_type, saw_return)?; }
                 Ok(())
             }
-            Stmt::While(cond, body) {
+            Stmt::While(cond, body) => {
                 let cond_type = self.expr_type(cond)?;
                 self.expect_type(cond_type, &[Type::Boolean, Type::Number, Type::Text, Type::List, Type::Object, Type::Null, Type::Any], "condição")?;
                 self.loop_depth += 1;
