@@ -617,6 +617,17 @@ impl IrRuntime {
 
     pub(crate) fn run(&mut self, program: &IrProgram) -> Result<(), String> {
         self.functions.extend(program.functions.clone());
+
+        if program.code.is_empty() {
+            if let Some(main) = self.functions.get("main").cloned() {
+                for (param, value) in main.params.iter().zip(std::iter::repeat(Value::Null)) {
+                    self.vars.insert(param.clone(), value);
+                }
+                let _ = self.execute_code(&main.code)?;
+            }
+            return Ok(());
+        }
+
         let _ = self.execute_code(&program.code)?;
         Ok(())
     }
