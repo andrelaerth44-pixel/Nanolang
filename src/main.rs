@@ -916,6 +916,34 @@ impl Semantic {
             }
             Expr::Call(name, args) => {
                 for arg in args { self.expr_type(arg)?; }
+                if name == "assert" {
+                    if args.len() != 1 { return Err("Nano: assert() recebe 1 argumento".into()); }
+                    return Ok(Type::Null);
+                }
+                if name == "channel" || name == "std.async.channel" {
+                    if !args.is_empty() { return Err("Nano: channel() não recebe argumentos".into()); }
+                    return Ok(Type::Number);
+                }
+                if name == "send" || name == "std.async.send" {
+                    if args.len() != 2 { return Err("Nano: send() recebe canal e valor".into()); }
+                    let channel = self.expr_type(&args[0])?;
+                    if channel != Type::Number && channel != Type::Any {
+                        return Err("Nano: send() requer canal Number".into());
+                    }
+                    return Ok(Type::Null);
+                }
+                if name == "recv" || name == "std.async.recv" {
+                    if args.len() != 1 { return Err("Nano: recv() recebe canal".into()); }
+                    let channel = self.expr_type(&args[0])?;
+                    if channel != Type::Number && channel != Type::Any {
+                        return Err("Nano: recv() requer canal Number".into());
+                    }
+                    return Ok(Type::Any);
+                }
+                if name == "close_channel" || name == "std.async.close_channel" {
+                    if args.len() != 1 { return Err("Nano: close_channel() recebe canal".into()); }
+                    return Ok(Type::Null);
+                }
                 if name == "len" {
                     if args.len() != 1 { return Err("Nano: len() recebe 1 argumento".into()); }
                     return Ok(Type::Number);
