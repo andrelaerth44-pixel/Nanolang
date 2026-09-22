@@ -1003,7 +1003,11 @@ impl Semantic {
                     return Ok(Type::Null);
                 }
                 if name == "fs_read_text" {
-                    if args.len() != 1 || self.expr_type(&args[0])? != Type::Text {
+                    if args.len() != 1 {
+                        return Err("Nano: fs_read_text() requer caminho".into());
+                    }
+                    let ty = self.expr_type(&args[0])?;
+                    if ty != Type::Text && ty != Type::Any {
                         return Err("Nano: fs_read_text() requer Text".into());
                     }
                     return Ok(Type::Text);
