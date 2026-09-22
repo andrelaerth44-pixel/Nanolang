@@ -43,8 +43,57 @@ impl fmt::Display for BackendError {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BackendCapabilities {
+    pub(crate) matmul: bool,
+    pub(crate) matmul_transposed: bool,
+    pub(crate) elementwise: bool,
+    pub(crate) fused_mul_add: bool,
+    pub(crate) reduce: bool,
+    pub(crate) resident_async: bool,
+    pub(crate) readback: bool,
+}
+
+impl BackendCapabilities {
+    pub(crate) fn for_kind(kind: BackendKind) -> Self {
+        match kind {
+            BackendKind::Cpu => Self {
+                matmul: true,
+                matmul_transposed: true,
+                elementwise: true,
+                fused_mul_add: true,
+                reduce: true,
+                resident_async: false,
+                readback: true,
+            },
+            BackendKind::Gpu => Self {
+                matmul: true,
+                matmul_transposed: true,
+                elementwise: true,
+                fused_mul_add: true,
+                reduce: true,
+                resident_async: true,
+                readback: true,
+            },
+            BackendKind::Npu => Self {
+                matmul: true,
+                matmul_transposed: true,
+                elementwise: true,
+                fused_mul_add: true,
+                reduce: true,
+                resident_async: true,
+                readback: true,
+            },
+        }
+    }
+}
+
 pub(crate) trait TensorBackend {
     fn kind(&self) -> BackendKind;
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::for_kind(self.kind())
+    }
 
     fn matmul(
         &self,
