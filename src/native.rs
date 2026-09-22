@@ -108,10 +108,11 @@ impl NativeModule {
             .collect();
 
         for (ip, inst) in code.iter().enumerate() {
-            let depth = entry_states[ip]
-                .as_ref()
-                .ok_or_else(|| format!("Nano native: instrução inalcançável {ip} em '{name}'"))?
-                .len();
+            let Some(entry) = entry_states[ip].as_ref() else {
+                // Código após return/jump pode existir no IR e não precisa ser emitido.
+                continue;
+            };
+            let depth = entry.len();
 
             self.text.push_str(&format!("{}:\n", labels[&ip]));
 
