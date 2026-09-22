@@ -1,0 +1,7 @@
+function join_text(a, b) {
+    return a + b
+}
+
+print(join_text("nano-", "lang"))
+print("left" == "left")
+print("left" != "right")
